@@ -105,4 +105,4 @@ class BankAccount(AbstractAccount):
             raise InvalidOperationError('Amount must be positive')
 
     def __str__(self):
-        return f"{self.account_id[-4:]} {self.name} {self.status.value} {self._balace} {self.currency.value}"
+        return f"{self.account_id[-4:]} {self.name} {self.status.value} {self._balace}{self.currency.value}"
