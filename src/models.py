@@ -103,3 +103,6 @@ class BankAccount(AbstractAccount):
     def check_amount(self, amount: int):
         if amount <= 0:
             raise InvalidOperationError('Amount must be positive')
+
+    def __str__(self):
+        return f"{self.account_id[-4:]} {self.name} {self.status.value} {self._balace} {self.currency.value}"
