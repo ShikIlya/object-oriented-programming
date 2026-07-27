@@ -32,7 +32,13 @@ class AbstractAccount(abc.ABC):
     status: AccountStatus = AccountStatus.ACTIVE
     _balance: int = 0
 
-    def __init__(self, account_id: str | None = None, name: str = '', status: AccountStatus = AccountStatus.ACTIVE, balance: int = 0):
+    def __init__(
+        self,
+        account_id: str | None = None,
+        name: str = '',
+        status: AccountStatus = AccountStatus.ACTIVE,
+        balance: int = 0
+    ):
         self.account_id = account_id
         self.name = name
         self.status = status
