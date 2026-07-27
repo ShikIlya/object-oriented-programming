@@ -33,6 +33,25 @@ class BankAccount(AbstractAccount):
         if account_id is None:
             self.account_id = str(uuid.uuid4())
 
+    def deposit(self, amount: int):
+        try:
+            if status == AccountStatus.FROZEN:
+                raise AccountFrozenError
+
+            if status == AccountStatus.CLOSED:
+                raise AccountClosedError
+
+            if amout <= 0:
+                raise InvalidOperationError
+
+            self.balance += amount
+
+        except AccountFrozenError:
+            print('Account is frozen')
+        except AccountClosedError:
+            print('Account is closed')
+        except InvalidOperationError:
+            print('Incorrect operation')
 
 class AccountStatus(Enum):
     ACTIVE = "active"
