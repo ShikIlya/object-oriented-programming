@@ -209,7 +209,7 @@ class PremiumAccount(BankAccount):
         if self._balance - amount - self.commission >= -self.overdraft:
             _balance -= amount + self.commission
         else:
-            raise InsufficientFundsError('Amount and commission exceeds overdraft')
+            raise InsufficientFundsError('Amount and commission exceed overdraft')
 
     def get_account_info(self):
         return {
