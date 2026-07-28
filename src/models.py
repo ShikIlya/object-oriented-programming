@@ -164,4 +164,4 @@ class SavingsAccount(BankAccount):
         return f"{self.account_id[-4:]} {self.name} {self.status.value} {self._balace}{self.currency.value} {self.min_balance} {interest_rest}"
 
     def apply_monthly_interest(self):
-        self._balance += self.balance * (1 + self.interest_rest / 100)
+        self._balance = self.balance * (1 + self.interest_rest / 100)
