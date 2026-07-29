@@ -408,3 +408,30 @@ class InvestmentAccount(BankAccount):
             "projected_value": projected_value,
             "projected_growth": projected_value - total_value,
         }
+
+class Client():
+    def __init__(
+        self,
+        client_id: str | None,
+        name: str,
+        phone_number: str,
+        email: str,
+        age: int
+    ):
+        self.name = name
+        self.phone_number = phone_number
+        self.email = email
+
+        if client_id is None:
+            self.client_id = str(uuid.uuid4())
+        else:
+            self.client_id = client_id
+
+        if age < 18:
+            raise InvalidOperationError('Age cannot be less than 18')
+        else:
+            self.age = age
+
+        self.accounts: list[str] = []
+        self.failed_login_attempts = 0
+        self.is_suspicious = False
