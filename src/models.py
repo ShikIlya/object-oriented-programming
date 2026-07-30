@@ -705,3 +705,12 @@ class TransactionQueue:
             pending_transactions,
             key=lambda t: (t.priority.value, t.created_at)
         )
+
+    def has_available_transactions(self) -> bool:
+        now = datetime.now()
+
+        return any(
+            t.status is TransactionStatus.PENDING
+            and (t.available_at is None or t.available_at <= now)
+            for t in self.transactions
+        )
