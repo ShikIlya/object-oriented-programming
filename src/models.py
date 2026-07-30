@@ -643,6 +643,7 @@ class Transaction:
         receiver_account_id: str,
         transaction_type: TransactionType,
         priority: TransactionPriority,
+        available_at: datetime | None
     ):
         if transaction_id is None:
             self.transaction_id = str(uuid.uuid4())
@@ -660,3 +661,47 @@ class Transaction:
         self.completed_at = None
         self.priority = priority
         self.failure_reason = None
+        self.available_at = available_at
+
+class TransactionQueue:
+    def __init__(self):
+        self.transactions: list[Transaction] = []
+
+    def add_transaction(self, transaction: Transaction):
+        if transaction is None:
+            raise InvalidOperationError('Transaction cannot be None')
+        if transaction.status is not TransactionStatus.PENDING:
+            raise InvalidOperationError('It is impossible to add not pending transaction')
+
+        self.transactions.append(transaction)
+
+    def cancel_transaction(self, transaction_id: str):
+        transaction = next(
+            (t for t in self.transactions if t.transaction_id == transaction_id),
+            None
+        )
+
+        if transaction is None:
+            raise InvalidOperationError('Transaction does not exist')
+
+        if transaction.status is not TransactionStatus.PENDING:
+            raise InvalidOperationError('It is impossible to cancel not pending transaction')
+
+        transaction.status = TransactionStatus.CANCELED
+
+    def get_next_transaction(self):
+        now = datetime.now()
+
+        pending_transactions = [
+            t for t in self.transactions
+            if t.status is TransactionStatus.PENDING
+            and (t.available_at is None or t.available_at <= now)
+        ]
+
+        if not pending_transactions:
+            raise InvalidOperationError('There are no available pending transactions')
+
+        return min(
+            pending_transactions,
+            key=lambda t: (t.priority.value, t.created_at)
+        )
