@@ -207,10 +207,10 @@ class PremiumAccount(BankAccount):
         if self.limit < amount:
             raise InvalidOperationError('Limit cannot be less than amount')
 
-        if self._balance - amount - self.commission >= -self.overdraft:
-            self._balance -= amount + self.commission
+        if self._balance - amount >= -self.overdraft:
+            self._balance -= amount
         else:
-            raise InsufficientFundsError('Amount and commission exceed overdraft')
+            raise InsufficientFundsError('Amount exceeds overdraft')
 
     def get_account_info(self):
         return {
@@ -468,7 +468,7 @@ class Bank():
 
     def __init__(self):
         self.clients: dict[str, Client] = {}
-        self.accounts: dict[str, BackAccount] = {}
+        self.accounts: dict[str, BankAccount] = {}
 
     def check_time(self):
         current_time = datetime.now().time()
@@ -714,3 +714,161 @@ class TransactionQueue:
             and (t.available_at is None or t.available_at <= now)
             for t in self.transactions
         )
+
+_EXCHANGE_RATES = {
+    # from RUB
+    (CurrencyType.RUB, CurrencyType.USD): 0.012,
+    (CurrencyType.RUB, CurrencyType.EUR): 0.011,
+    (CurrencyType.RUB, CurrencyType.KZT): 5.0,
+    (CurrencyType.RUB, CurrencyType.CNY): 0.085,
+
+    # from USD
+    (CurrencyType.USD, CurrencyType.RUB): 83.0,
+    (CurrencyType.USD, CurrencyType.EUR): 0.92,
+    (CurrencyType.USD, CurrencyType.KZT): 420.0,
+    (CurrencyType.USD, CurrencyType.CNY): 7.2,
+
+    # from EUR
+    (CurrencyType.EUR, CurrencyType.RUB): 90.0,
+    (CurrencyType.EUR, CurrencyType.USD): 1.09,
+    (CurrencyType.EUR, CurrencyType.KZT): 460.0,
+    (CurrencyType.EUR, CurrencyType.CNY): 7.8,
+
+    # from KZT
+    (CurrencyType.KZT, CurrencyType.RUB): 0.2,
+    (CurrencyType.KZT, CurrencyType.USD): 0.0024,
+    (CurrencyType.KZT, CurrencyType.EUR): 0.0022,
+    (CurrencyType.KZT, CurrencyType.CNY): 0.017,
+
+    # from CNY
+    (CurrencyType.CNY, CurrencyType.RUB): 11.5,
+    (CurrencyType.CNY, CurrencyType.USD): 0.14,
+    (CurrencyType.CNY, CurrencyType.EUR): 0.13,
+    (CurrencyType.CNY, CurrencyType.KZT): 58.0,
+}
+
+class TransactionProcessor:
+
+    def __init__(self, bank: Bank):
+        self.bank = bank
+
+    def process_next_transaction(self, queue: TransactionQueue):
+        if not queue.has_available_transactions():
+            raise InvalidOperationError('There are no available pending transactions')
+
+        transaction = queue.get_next_transaction()
+        transaction.status = TransactionStatus.PROCESSING
+
+        try:
+            self._process_transaction(transaction)
+            transaction.status = TransactionStatus.COMPLETED
+            transaction.completed_at = datetime.now()
+        except Exception as ex:
+            transaction.status = TransactionStatus.FAILED
+            transaction.failure_reason = str(ex)
+            transaction.completed_at = datetime.now()
+
+    def _process_transaction(self, transaction: Transaction):
+        self._validate_transaction(transaction)
+
+        sender_account = self._get_sender_account(transaction)
+        receiver_account = None
+
+        if transaction.transaction_type != TransactionType.EXTERNAL_TRANSACTION:
+            receiver_account = self._get_receiver_account(transaction)
+
+        self._execute_transaction_by_type(
+            transaction,
+            sender_account,
+            receiver_account
+        )
+
+    def _get_sender_account(self, transaction: Transaction):
+        if transaction.sender_account_id not in self.bank.accounts:
+            raise InvalidOperationError('Sender account does not exist')
+
+        return self.bank.accounts[transaction.sender_account_id]
+
+    def _get_receiver_account(self, transaction: Transaction):
+        if transaction.receiver_account_id not in self.bank.accounts:
+            raise InvalidOperationError('Receiver account does not exist')
+
+        return self.bank.accounts[transaction.receiver_account_id]
+
+    def _execute_transaction_by_type(self, transaction: Transaction, sender_account: BankAccount, receiver_account: BankAccount | None):
+        if transaction.transaction_type == TransactionType.INTERNAL_TRANSACTION:
+            self._process_internal_transaction(transaction, sender_account, receiver_account)
+        elif transaction.transaction_type == TransactionType.EXTERNAL_TRANSACTION:
+            self._process_external_transaction(transaction, sender_account, receiver_account)
+        elif transaction.transaction_type == TransactionType.EXCHANGE_TRANSACTION:
+            self._process_exchange_transaction(transaction, sender_account, receiver_account)
+        else:
+            raise InvalidOperationError('Transaction type not supported')
+
+    def _validate_transaction(self, transaction: Transaction):
+        if transaction.amount <= 0:
+            raise InvalidOperationError('Amount cannot be zero')
+
+        if transaction.commission < 0:
+            raise InvalidOperationError('Commission cannot be negative')
+
+        if transaction.sender_account_id == transaction.receiver_account_id:
+            raise InvalidOperationError('Sender and receiver accounts must be different')
+
+    def _process_internal_transaction(
+        self,
+        transaction: Transaction,
+        sender_account: BankAccount,
+        receiver_account: BankAccount | None
+    ):
+        if receiver_account is None:
+            raise InvalidOperationError('Receiver account is required for this transaction type')
+
+        total_debit = transaction.amount + transaction.commission
+
+        sender_account.withdraw(total_debit)
+        receiver_account.deposit(transaction.amount)
+
+    def _process_external_transaction(
+        self,
+        transaction: Transaction,
+        sender_account: BankAccount,
+        receiver_account: BankAccount | None
+    ):
+        total_debit = transaction.amount + transaction.commission
+        sender_account.withdraw(total_debit)
+        # receiver_account.deposit(transaction.amout) Данный перевод не делается потому что счет вне этого банка
+
+    def _get_exchange_rate(
+        self,
+        from_currency: CurrencyType,
+        to_currency: CurrencyType
+    ):
+        if from_currency == to_currency:
+            return 1.0
+
+        key = (from_currency, to_currency)
+        if key not in _EXCHANGE_RATES:
+            raise InvalidOperationError('Exchange rate not available for this currency pair')
+
+        return _EXCHANGE_RATES[key]
+
+    def _process_exchange_transaction(
+        self,
+        transaction: Transaction,
+        sender_account: BankAccount,
+        receiver_account: BankAccount | None
+    ):
+        if receiver_account is None:
+            raise InvalidOperationError('Receiver account is required for this transaction type')
+
+        if transaction.currency != sender_account.currency:
+            raise InvalidOperationError('Transaction currency must match sender account currency')
+
+        rate = self._get_exchange_rate(transaction.currency, receiver_account.currency)
+
+        converted_amount = transaction.amount * rate
+        total_debit = transaction.amount + transaction.commission
+
+        sender_account.withdraw(total_debit)
+        receiver_account.deposit(converted_amount)
