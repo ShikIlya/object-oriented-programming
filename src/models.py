@@ -1,6 +1,7 @@
 from enum import Enum
 import abc
 import uuid
+from datetime import datetime, time
 
 class AccountStatus(Enum):
     ACTIVE = "active"
@@ -409,6 +410,10 @@ class InvestmentAccount(BankAccount):
             "projected_growth": projected_value - total_value,
         }
 
+class ClientStatus(Enum):
+    ACTIVE = 'active'
+    BLOCKED = 'blocked'
+
 class Client():
     def __init__(
         self,
@@ -416,11 +421,17 @@ class Client():
         name: str,
         phone_number: str,
         email: str,
-        age: int
+        age: int,
+        password: str,
     ):
         self.name = name
         self.phone_number = phone_number
         self.email = email
+        self.status = ClientStatus.ACTIVE
+        self.accounts: list[str] = []
+        self.failed_login_attempts = 0
+        self.password = password
+        self.is_suspicious = False
 
         if client_id is None:
             self.client_id = str(uuid.uuid4())
@@ -432,6 +443,174 @@ class Client():
         else:
             self.age = age
 
-        self.accounts: list[str] = []
-        self.failed_login_attempts = 0
-        self.is_suspicious = False
+class AccountType(Enum):
+    Bank = "bank"
+    Savings = "savings"
+    Premium = "premium"
+    Investment = "investment"
+
+class Bank():
+    def add_client(
+        self,
+        name,
+        phone_number,
+        email,
+        age,
+        password: str,
+        client_id=None,
+    ):
+        client = Client(client_id, name, phone_number, email, age, password)
+
+        if client.client_id in self.clients:
+            raise InvalidOperationError('Client already exists')
+
+        self.clients[client.client_id] = client
+
+    def __init__(self):
+        self.clients: dict[str, Client] = {}
+        self.accounts: dict[str, BackAccount] = {}
+
+    def check_time(self):
+        current_time = datetime.now().time()
+
+        if time(0, 0) <= current_time < time(5, 0):
+            raise InvalidOperationError('Operations are not allowed from 00:00 to 05:00')
+
+    def open_account(
+        self,
+        client_id: str,
+        account_type: AccountType,
+        name: str,
+        balance: float,
+        currency: CurrencyType,
+        *,
+        min_balance: float = 0,
+        interest_rate: float = 0,
+        commission: float = 0,
+        overdraft: float = 0,
+        limit: float = 0,
+        stocks: list[Stock] | None = None,
+        bonds: list[Bond] | None = None,
+        etf: list[Etf] | None = None
+    ):
+        if client_id not in self.clients:
+            raise InvalidOperationError('Client does not exist')
+
+        self.check_time()
+
+        client = self.clients[client_id]
+
+        if client.status is ClientStatus.BLOCKED:
+            raise InvalidOperationError('Client is blocked')
+
+        account = None
+
+        if account_type is AccountType.Bank:
+            account = BankAccount(name=name, balance=balance, currency=currency)
+        elif account_type is AccountType.Savings:
+            account = SavingsAccount(name=name, balance=balance, currency=currency, min_balance=min_balance, interest_rate=interest_rate)
+        elif account_type is AccountType.Premium:
+            account = PremiumAccount(name=name, balance=balance, currency=currency, commission=commission, overdraft=overdraft, limit=limit)
+        elif account_type is AccountType.Investment:
+            account = InvestmentAccount(name=name, balance=balance, currency=currency, stocks=stocks, bonds=bonds, etf=etf)
+        else:
+            raise InvalidOperationError('Invalid account type')
+
+        self.accounts[account.account_id] = account
+        client.accounts.append(account.account_id)
+
+        return account
+
+    def close_account(self, account_id: str):
+        if account_id not in self.accounts:
+            raise InvalidOperationError('Account does not exist')
+
+        self.check_time()
+
+        account = self.accounts[account_id]
+
+        if account.status is AccountStatus.CLOSED:
+            raise InvalidOperationError('Account is already closed')
+
+        account.status = AccountStatus.CLOSED
+
+    def freeze_account(self, account_id: str):
+        if account_id not in self.accounts:
+            raise InvalidOperationError('Account does not exist')
+
+        self.check_time()
+
+        account = self.accounts[account_id]
+
+        if account.status is AccountStatus.CLOSED:
+            raise InvalidOperationError('Account is closed and cannot be frozen')
+
+        if account.status is AccountStatus.FROZEN:
+            raise InvalidOperationError('Account is already frozen')
+
+        account.status = AccountStatus.FROZEN
+
+    def unfreeze_account(self, account_id: str):
+        if account_id not in self.accounts:
+            raise InvalidOperationError('Account does not exist')
+
+        self.check_time()
+
+        account = self.accounts[account_id]
+
+        if account.status is AccountStatus.CLOSED:
+            raise InvalidOperationError('Account is closed and cannot be unfrozen')
+
+        if account.status is not AccountStatus.FROZEN:
+            raise InvalidOperationError('Account is not frozen')
+
+        account.status = AccountStatus.ACTIVE
+
+    def authenticate_client(self, client_id: str, password: str):
+        if client_id not in self.clients:
+            raise InvalidOperationError('Client does not exist')
+
+        self.check_time()
+
+        client = self.clients[client_id]
+
+        if client.status is ClientStatus.BLOCKED:
+            raise InvalidOperationError('Client is blocked')
+
+        if client.password != password:
+            client.failed_login_attempts += 1
+
+            if client.failed_login_attempts >= 3:
+                client.status = ClientStatus.BLOCKED
+                raise InvalidOperationError('Client is blocked after 3 failed login attempts')
+
+            raise InvalidOperationError('Password is incorrect')
+
+        client.failed_login_attempts = 0
+
+        return client
+
+    def get_total_balance(self):
+        return sum(
+            account._balance
+            for account in self.accounts.values()
+            if account.status is not AccountStatus.CLOSED
+        )
+
+    def get_clients_ranking(self):
+        ranking = []
+
+        for client in self.clients.values():
+            total_balance = sum(
+                self.accounts[account_id]._balance
+                for account_id in client.accounts
+                if self.accounts[account_id].status is not AccountStatus.CLOSED
+            )
+
+            ranking.append({
+                "client_id": client.client_id,
+                "name": client.name,
+                "total_balance": total_balance
+            })
+
+        return sorted(ranking, key=lambda item: item["total_balance"], reverse=True)
