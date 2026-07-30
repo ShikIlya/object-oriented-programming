@@ -444,10 +444,10 @@ class Client():
             self.age = age
 
 class AccountType(Enum):
-    Bank = "bank"
-    Savings = "savings"
-    Premium = "premium"
-    Investment = "investment"
+    BANK = "bank"
+    SAVINGS = "savings"
+    PREMIUM = "premium"
+    INVESTMENT = "investment"
 
 class Bank():
     def add_client(
@@ -505,13 +505,13 @@ class Bank():
 
         account = None
 
-        if account_type is AccountType.Bank:
+        if account_type is AccountType.BANK:
             account = BankAccount(name=name, balance=balance, currency=currency)
-        elif account_type is AccountType.Savings:
+        elif account_type is AccountType.SAVINGS:
             account = SavingsAccount(name=name, balance=balance, currency=currency, min_balance=min_balance, interest_rate=interest_rate)
-        elif account_type is AccountType.Premium:
+        elif account_type is AccountType.PREMIUM:
             account = PremiumAccount(name=name, balance=balance, currency=currency, commission=commission, overdraft=overdraft, limit=limit)
-        elif account_type is AccountType.Investment:
+        elif account_type is AccountType.INVESTMENT:
             account = InvestmentAccount(name=name, balance=balance, currency=currency, stocks=stocks, bonds=bonds, etf=etf)
         else:
             raise InvalidOperationError('Invalid account type')
@@ -614,3 +614,49 @@ class Bank():
             })
 
         return sorted(ranking, key=lambda item: item["total_balance"], reverse=True)
+
+class TransactionType(Enum):
+    INTERNAL_TRANSACTION = 1
+    EXTERNAL_TRANSACTION = 2
+    EXCHANGE_TRANSACTION = 3
+
+class TransactionStatus(Enum):
+    PENDING = 1
+    PROCESSING = 2
+    COMPLETED = 3
+    FAILED = 4
+    CANCELED = 5
+
+class TransactionPriority(Enum):
+    HIGH = 1
+    MEDIUM = 2
+    LOW = 3
+
+class Transaction:
+    def __init__(
+        self,
+        transaction_id: str | None,
+        amount: float,
+        currency: CurrencyType,
+        commission: float,
+        sender_account_id: str,
+        receiver_account_id: str,
+        transaction_type: TransactionType,
+        priority: TransactionPriority,
+    ):
+        if transaction_id is None:
+            self.transaction_id = str(uuid.uuid4())
+        else:
+            self.transaction_id = transaction_id
+
+        self.amount = amount
+        self.currency = currency
+        self.commission = commission
+        self.sender_account_id = sender_account_id
+        self.receiver_account_id = receiver_account_id
+        self.transaction_type = transaction_type
+        self.status = TransactionStatus.PENDING
+        self.created_at = datetime.now()
+        self.completed_at = None
+        self.priority = priority
+        self.failure_reason = None
