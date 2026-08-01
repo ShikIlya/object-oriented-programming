@@ -1,0 +1,584 @@
+from models import (
+    Bank,
+    AuditLog,
+    RiskAnalyzer
+)
+from datetime import datetime
+import json
+import csv
+from pathlib import Path
+import matplotlib.pyplot as plt
+
+class ReportBuilder:
+    def __init__(
+        self,
+        bank: Bank,
+        audit_log: AuditLog,
+        risk_analyzer: RiskAnalyzer
+    ):
+        self.bank = bank
+        self.audit_log = audit_log
+        self.risk_analyzer = risk_analyzer
+
+    def build_bank_report(self) -> dict:
+        stats = {
+            "PENDING": 0,
+            "PROCESSING": 0,
+            "COMPLETED": 0,
+            "FAILED": 0,
+            "CANCELED": 0,
+            "BLOCKED": 0,
+        }
+
+        for transaction in self.bank.transactions:
+            stats[transaction.status.name] += 1
+
+        top_clients_raw = self.bank.get_clients_ranking()[:3]
+        top_clients = []
+
+        for index, client_data in enumerate(top_clients_raw, start=1):
+            top_clients.append({
+                "rank": index,
+                "client_id": client_data["client_id"],
+                "name": client_data["name"],
+                "total_balance": client_data["total_balance"],
+            })
+
+        return {
+            "report_type": "bank",
+            "generated_at": datetime.now().isoformat(),
+            "summary": {
+                "clients_count": len(self.bank.clients),
+                "accounts_count": len(self.bank.accounts),
+                "transactions_count": len(self.bank.transactions),
+                "total_balance": self.bank.get_total_balance(),
+            },
+            "details": {
+                "transaction_status_stats": stats,
+                "top_clients": top_clients,
+            },
+            "charts_data": {
+                "pie_chart": {
+                    "title": "Transaction Status Distribution",
+                    "labels": list(stats.keys()),
+                    "values": list(stats.values()),
+                },
+                "bar_chart": {
+                    "title": "Top Clients by Balance",
+                    "ylabel": "Balance",
+                    "labels": [client["name"] for client in top_clients],
+                    "values": [client["total_balance"] for client in top_clients],
+                },
+                "line_chart": {
+                    "title": "Bank Balance Movement",
+                    "ylabel": "Balance",
+                    "labels": ["Initial", "Current"],
+                    "values": [0, self.bank.get_total_balance()],
+                },
+            },
+        }
+
+    def build_client_report(self, client_id: str) -> dict:
+        if client_id not in self.bank.clients:
+            raise ValueError(f"Client {client_id} does not exist")
+
+        client = self.bank.clients[client_id]
+
+        accounts = []
+        total_balance = 0
+
+        for account_id in client.accounts:
+            account = self.bank.accounts[account_id]
+            account_info = account.get_account_info()
+            accounts.append(account_info)
+            total_balance += account._balance
+
+        transactions = []
+        suspicious_transactions = []
+
+        status_stats = {
+            "PENDING": 0,
+            "PROCESSING": 0,
+            "COMPLETED": 0,
+            "FAILED": 0,
+            "CANCELED": 0,
+            "BLOCKED": 0,
+        }
+
+        client_account_ids = set(client.accounts)
+
+        for transaction in self.bank.transactions:
+            is_client_transaction = (
+                    transaction.sender_account_id in client_account_ids
+                    or transaction.receiver_account_id in client_account_ids
+            )
+
+            if not is_client_transaction:
+                continue
+
+            transaction_data = {
+                "transaction_id": transaction.transaction_id,
+                "amount": transaction.amount,
+                "currency": transaction.currency.value,
+                "transaction_type": transaction.transaction_type.name,
+                "status": transaction.status.name,
+                "sender_account_id": transaction.sender_account_id,
+                "receiver_account_id": transaction.receiver_account_id,
+                "commission": transaction.commission,
+                "created_at": transaction.created_at.isoformat(),
+                "completed_at": (
+                    transaction.completed_at.isoformat()
+                    if transaction.completed_at is not None
+                    else None
+                ),
+                "failure_reason": transaction.failure_reason,
+            }
+
+            transactions.append(transaction_data)
+            status_stats[transaction.status.name] += 1
+
+            if self.risk_analyzer is not None:
+                risk_level = self.risk_analyzer.analyze_risk(transaction)
+
+                if risk_level.name in ("MEDIUM", "HIGH") and transaction.status.name != "CANCELED":
+                    suspicious_transactions.append({
+                        **transaction_data,
+                        "risk_level": risk_level.name,
+                    })
+
+        return {
+            "report_type": "client",
+            "generated_at": datetime.now().isoformat(),
+            "summary": {
+                "client_id": client.client_id,
+                "client_name": client.name,
+                "client_status": client.status.value,
+                "accounts_count": len(accounts),
+                "total_balance": total_balance,
+                "transactions_count": len(transactions),
+                "suspicious_transactions_count": len(suspicious_transactions),
+            },
+            "details": {
+                "accounts": accounts,
+                "transactions": transactions,
+                "suspicious_transactions": suspicious_transactions,
+                "transaction_status_stats": status_stats,
+            },
+            "charts_data": {
+                "pie_chart": {
+                    "title": "Client Transaction Status Distribution",
+                    "labels": list(status_stats.keys()),
+                    "values": list(status_stats.values()),
+                },
+                "bar_chart": {
+                    "title": "Client Accounts Balance",
+                    "ylabel": "Balance",
+                    "labels": [account["name"] for account in accounts],
+                    "values": [account["balance"] for account in accounts],
+                },
+                "line_chart": {
+                    "title": "Client Balance Movement",
+                    "ylabel": "Balance",
+                    "labels": [account["name"] for account in accounts],
+                    "values": [account["balance"] for account in accounts],
+                },
+            },
+        }
+
+    def build_risk_report(self) -> dict:
+        if self.risk_analyzer is None:
+            raise ValueError("Risk analyzer is not configured")
+
+        suspicious_transactions = []
+
+        risk_level_stats = {
+            "LOW": 0,
+            "MEDIUM": 0,
+            "HIGH": 0,
+        }
+
+        status_stats = {
+            "PENDING": 0,
+            "PROCESSING": 0,
+            "COMPLETED": 0,
+            "FAILED": 0,
+            "CANCELED": 0,
+            "BLOCKED": 0,
+        }
+
+        client_risk_counts = {}
+
+        for transaction in self.bank.transactions:
+            risk_level = self.risk_analyzer.analyze_risk(transaction)
+            risk_level_stats[risk_level.name] += 1
+            status_stats[transaction.status.name] += 1
+
+            if risk_level.name in ("MEDIUM", "HIGH") and transaction.status.name != "CANCELED":
+                client_id = "UNKNOWN"
+
+                for client in self.bank.clients.values():
+                    if transaction.sender_account_id in client.accounts:
+                        client_id = client.client_id
+                        break
+
+                suspicious_transaction = {
+                    "transaction_id": transaction.transaction_id,
+                    "client_id": client_id,
+                    "amount": transaction.amount,
+                    "currency": transaction.currency.value,
+                    "transaction_type": transaction.transaction_type.name,
+                    "status": transaction.status.name,
+                    "sender_account_id": transaction.sender_account_id,
+                    "receiver_account_id": transaction.receiver_account_id,
+                    "commission": transaction.commission,
+                    "created_at": transaction.created_at.isoformat(),
+                    "completed_at": (
+                        transaction.completed_at.isoformat()
+                        if transaction.completed_at is not None
+                        else None
+                    ),
+                    "failure_reason": transaction.failure_reason,
+                    "risk_level": risk_level.name,
+                }
+
+                suspicious_transactions.append(suspicious_transaction)
+
+                if client_id not in client_risk_counts:
+                    client_risk_counts[client_id] = 0
+                client_risk_counts[client_id] += 1
+
+        top_risky_clients = sorted(
+            client_risk_counts.items(),
+            key=lambda item: item[1],
+            reverse=True
+        )[:5]
+
+        top_risky_clients_data = [
+            {
+                "rank": index + 1,
+                "client_id": client_id,
+                "suspicious_transactions_count": count,
+            }
+            for index, (client_id, count) in enumerate(top_risky_clients)
+        ]
+
+        return {
+            "report_type": "risk",
+            "generated_at": datetime.now().isoformat(),
+            "summary": {
+                "transactions_analyzed": len(self.bank.transactions),
+                "suspicious_transactions_count": len(suspicious_transactions),
+                "high_risk_count": risk_level_stats["HIGH"],
+                "medium_risk_count": risk_level_stats["MEDIUM"],
+                "low_risk_count": risk_level_stats["LOW"],
+            },
+            "details": {
+                "risk_level_stats": risk_level_stats,
+                "transaction_status_stats": status_stats,
+                "suspicious_transactions": suspicious_transactions,
+                "top_risky_clients": top_risky_clients_data,
+            },
+            "charts_data": {
+                "pie_chart": {
+                    "title": "Risk Level Distribution",
+                    "labels": list(risk_level_stats.keys()),
+                    "values": list(risk_level_stats.values()),
+                },
+                "bar_chart": {
+                    "title": "Top Risky Clients",
+                    "ylabel": "Suspicious Transactions Count",
+                    "labels": [item["client_id"] for item in top_risky_clients_data],
+                    "values": [item["suspicious_transactions_count"] for item in top_risky_clients_data],
+                },
+                "line_chart": {
+                    "title": "Suspicious Transactions Flow",
+                    "ylabel": "Count",
+                    "labels": ["Low", "Medium", "High"],
+                    "values": [
+                        risk_level_stats["LOW"],
+                        risk_level_stats["MEDIUM"],
+                        risk_level_stats["HIGH"],
+                    ],
+                },
+            },
+        }
+
+    def format_as_text(self, report_data: dict) -> str:
+        report_type = report_data.get("report_type", "unknown")
+        generated_at = report_data.get("generated_at", "unknown")
+        summary = report_data.get("summary", {})
+        details = report_data.get("details", {})
+
+        lines = []
+        lines.append("=" * 60)
+        lines.append(f"{report_type.upper()} REPORT")
+        lines.append("=" * 60)
+        lines.append(f"Generated at: {generated_at}")
+        lines.append("")
+
+        if report_type == "bank":
+            status_stats = details.get("transaction_status_stats", {})
+            top_clients = details.get("top_clients", [])
+
+            lines.append("SUMMARY")
+            lines.append("-" * 60)
+            lines.append(f"Clients: {summary.get('clients_count', 0)}")
+            lines.append(f"Accounts: {summary.get('accounts_count', 0)}")
+            lines.append(f"Transactions: {summary.get('transactions_count', 0)}")
+            lines.append(f"Total balance: {summary.get('total_balance', 0)}")
+            lines.append("")
+
+            lines.append("TRANSACTION STATISTICS")
+            lines.append("-" * 60)
+            for status, count in status_stats.items():
+                lines.append(f"{status}: {count}")
+            lines.append("")
+
+            lines.append("TOP CLIENTS")
+            lines.append("-" * 60)
+            for client in top_clients:
+                lines.append(
+                    f"{client.get('rank', '')}. "
+                    f"{client.get('name', 'Unknown')} | "
+                    f"{client.get('total_balance', 0)}"
+                )
+
+        elif report_type == "client":
+            accounts = details.get("accounts", [])
+            transactions = details.get("transactions", [])
+            suspicious_transactions = details.get("suspicious_transactions", [])
+            status_stats = details.get("transaction_status_stats", {})
+
+            lines.append("SUMMARY")
+            lines.append("-" * 60)
+            lines.append(f"Client ID: {summary.get('client_id', '')}")
+            lines.append(f"Client name: {summary.get('client_name', '')}")
+            lines.append(f"Client status: {summary.get('client_status', '')}")
+            lines.append(f"Accounts count: {summary.get('accounts_count', 0)}")
+            lines.append(f"Total balance: {summary.get('total_balance', 0)}")
+            lines.append(f"Transactions count: {summary.get('transactions_count', 0)}")
+            lines.append(
+                f"Suspicious transactions count: "
+                f"{summary.get('suspicious_transactions_count', 0)}"
+            )
+            lines.append("")
+
+            lines.append("ACCOUNTS")
+            lines.append("-" * 60)
+            for account in accounts:
+                lines.append(
+                    f"{account.get('name', '')} | "
+                    f"{account.get('balance', 0)} {account.get('currency', '')} | "
+                    f"{account.get('status', '')}"
+                )
+            lines.append("")
+
+            lines.append("TRANSACTION STATISTICS")
+            lines.append("-" * 60)
+            for status, count in status_stats.items():
+                lines.append(f"{status}: {count}")
+            lines.append("")
+
+            lines.append("RECENT TRANSACTIONS")
+            lines.append("-" * 60)
+            for transaction in transactions[:10]:
+                lines.append(
+                    f"{transaction.get('transaction_id', '')} | "
+                    f"{transaction.get('amount', 0)} {transaction.get('currency', '')} | "
+                    f"{transaction.get('status', '')}"
+                )
+            lines.append("")
+
+            lines.append("SUSPICIOUS TRANSACTIONS")
+            lines.append("-" * 60)
+            for transaction in suspicious_transactions:
+                lines.append(
+                    f"{transaction.get('transaction_id', '')} | "
+                    f"{transaction.get('amount', 0)} {transaction.get('currency', '')} | "
+                    f"{transaction.get('status', '')} | "
+                    f"{transaction.get('risk_level', '')}"
+                )
+        elif report_type == "risk":
+            risk_level_stats = details.get("risk_level_stats", {})
+            status_stats = details.get("transaction_status_stats", {})
+            suspicious_transactions = details.get("suspicious_transactions", [])
+            top_risky_clients = details.get("top_risky_clients", [])
+
+            lines.append("SUMMARY")
+            lines.append("-" * 60)
+            lines.append(f"Transactions analyzed: {summary.get('transactions_analyzed', 0)}")
+            lines.append(
+                f"Suspicious transactions count: "
+                f"{summary.get('suspicious_transactions_count', 0)}"
+            )
+            lines.append(f"High risk count: {summary.get('high_risk_count', 0)}")
+            lines.append(f"Medium risk count: {summary.get('medium_risk_count', 0)}")
+            lines.append(f"Low risk count: {summary.get('low_risk_count', 0)}")
+            lines.append("")
+
+            lines.append("RISK LEVEL STATISTICS")
+            lines.append("-" * 60)
+            for level, count in risk_level_stats.items():
+                lines.append(f"{level}: {count}")
+            lines.append("")
+
+            lines.append("TRANSACTION STATUS STATISTICS")
+            lines.append("-" * 60)
+            for status, count in status_stats.items():
+                lines.append(f"{status}: {count}")
+            lines.append("")
+
+            lines.append("TOP RISKY CLIENTS")
+            lines.append("-" * 60)
+            for client in top_risky_clients:
+                lines.append(
+                    f"{client.get('rank', '')}. "
+                    f"{client.get('client_id', 'UNKNOWN')} | "
+                    f"{client.get('suspicious_transactions_count', 0)} suspicious transactions"
+                )
+            lines.append("")
+
+            lines.append("SUSPICIOUS TRANSACTIONS")
+            lines.append("-" * 60)
+            for transaction in suspicious_transactions[:10]:
+                lines.append(
+                    f"{transaction.get('transaction_id', '')} | "
+                    f"{transaction.get('client_id', 'UNKNOWN')} | "
+                    f"{transaction.get('amount', 0)} {transaction.get('currency', '')} | "
+                    f"{transaction.get('status', '')} | "
+                    f"{transaction.get('risk_level', '')}"
+                )
+        else:
+            lines.append("Unsupported report type")
+
+        return "\n".join(lines)
+
+    def export_to_json(self, report_data: dict, file_path: str) -> None:
+        with open(file_path, "w", encoding="utf-8") as file:
+            json.dump(report_data, file, ensure_ascii=False, indent=4)
+
+    def export_to_csv(self, report_data: dict, file_path: str) -> None:
+        details = report_data.get("details", {})
+        top_clients = details.get("top_clients", [])
+
+        if not top_clients:
+            with open(file_path, "w", encoding="utf-8", newline="") as file:
+                file.write("")
+            return
+
+        fieldnames = list(top_clients[0].keys())
+
+        with open(file_path, "w", encoding="utf-8", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(top_clients)
+
+    def save_charts(self, report_data: dict, output_dir: str) -> list[str]:
+        charts_data = report_data.get("charts_data", {})
+        report_type = report_data.get("report_type", "report")
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        saved_files = []
+
+        def save_pie_chart(data: dict, filename: str):
+            labels = data.get("labels", [])
+            values = data.get("values", [])
+            title = data.get("title", "Pie Chart")
+
+            filtered_data = [
+                (label, value)
+                for label, value in zip(labels, values)
+                if value > 0
+            ]
+
+            if not filtered_data:
+                return
+
+            filtered_labels = [item[0] for item in filtered_data]
+            filtered_values = [item[1] for item in filtered_data]
+
+            fig, ax = plt.subplots(figsize=(8, 5))
+
+            wedges, _, _ = ax.pie(
+                filtered_values,
+                labels=None,
+                autopct=lambda pct: f"{pct:.1f}%" if pct > 0 else "",
+                startangle=90,
+                pctdistance=0.7
+            )
+
+            ax.legend(
+                wedges,
+                filtered_labels,
+                title="Categories",
+                loc="center left",
+                bbox_to_anchor=(1, 0.5)
+            )
+
+            ax.set_title(title)
+            fig.tight_layout()
+
+            file_path = output_path / filename
+            fig.savefig(file_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+            saved_files.append(str(file_path))
+
+        def save_bar_chart(data: dict, filename: str):
+            labels = data.get("labels", [])
+            values = data.get("values", [])
+            title = data.get("title", "Bar Chart")
+            ylabel = data.get("ylabel", "Value")
+
+            if not labels or not values:
+                return
+
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.bar(labels, values)
+            ax.set_title(title)
+            ax.set_ylabel(ylabel)
+            ax.tick_params(axis="x", rotation=30)
+            plt.setp(ax.get_xticklabels(), ha="right")
+            fig.tight_layout()
+
+            file_path = output_path / filename
+            fig.savefig(file_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+            saved_files.append(str(file_path))
+
+        def save_line_chart(data: dict, filename: str):
+            labels = data.get("labels", [])
+            values = data.get("values", [])
+            title = data.get("title", "Line Chart")
+            ylabel = data.get("ylabel", "Value")
+
+            if not labels or not values:
+                return
+
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.plot(labels, values, marker="o")
+            ax.set_title(title)
+            ax.set_ylabel(ylabel)
+            ax.tick_params(axis="x", rotation=30)
+            plt.setp(ax.get_xticklabels(), ha="right")
+            fig.tight_layout()
+
+            file_path = output_path / filename
+            fig.savefig(file_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+            saved_files.append(str(file_path))
+
+        pie_data = charts_data.get("pie_chart")
+        if pie_data:
+            save_pie_chart(pie_data, f"{report_type}_pie_chart.png")
+
+        bar_data = charts_data.get("bar_chart")
+        if bar_data:
+            save_bar_chart(bar_data, f"{report_type}_bar_chart.png")
+
+        line_data = charts_data.get("line_chart")
+        if line_data:
+            save_line_chart(line_data, f"{report_type}_line_chart.png")
+
+        return saved_files
