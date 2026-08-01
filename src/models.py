@@ -1,3 +1,4 @@
+from __future__ import annotations
 from enum import Enum
 import abc
 import uuid
@@ -807,7 +808,7 @@ class AuditEntry:
         client_id: str | None,
         account_id: str | None,
         transaction_id: str | None,
-        metadata: dict[str, object]
+        metadata: dict[str, object] | None
     ):
         self.timestamp = datetime.now()
         self.level = level
@@ -1090,6 +1091,20 @@ class TransactionProcessor:
                 }
             )
             return
+
+        if risk_level == RiskLevel.MEDIUM:
+            self.audit_log.log(
+                level=AuditLevel.WARNING,
+                event_type='transaction_warning',
+                message='Transaction marked as suspicious with medium risk',
+                account_id=transaction.sender_account_id,
+                transaction_id=transaction.transaction_id,
+                metadata={
+                    'risk_level': risk_level.name,
+                    'sender_account_id': transaction.sender_account_id,
+                    'receiver_account_id': transaction.receiver_account_id,
+                }
+            )
 
         transaction.status = TransactionStatus.PROCESSING
 
