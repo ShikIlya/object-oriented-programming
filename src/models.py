@@ -1,7 +1,7 @@
 from enum import Enum
 import abc
 import uuid
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import json
 
 class AccountStatus(Enum):
@@ -184,7 +184,7 @@ class PremiumAccount(BankAccount):
         overdraft: float = 0,
         limit: float = 0
     ):
-        super().__init(account_id, name, status, balance, currency)
+        super().__init__(account_id, name, status, balance, currency)
 
         if commission < 0:
             raise InvalidOperationError('Commission cannot be negative')
@@ -415,7 +415,7 @@ class ClientStatus(Enum):
     ACTIVE = 'active'
     BLOCKED = 'blocked'
 
-class Client():
+class Client:
     def __init__(
         self,
         client_id: str | None,
@@ -444,178 +444,6 @@ class Client():
         else:
             self.age = age
 
-class AccountType(Enum):
-    BANK = "bank"
-    SAVINGS = "savings"
-    PREMIUM = "premium"
-    INVESTMENT = "investment"
-
-class Bank():
-    def add_client(
-        self,
-        name,
-        phone_number,
-        email,
-        age,
-        password: str,
-        client_id=None,
-    ):
-        client = Client(client_id, name, phone_number, email, age, password)
-
-        if client.client_id in self.clients:
-            raise InvalidOperationError('Client already exists')
-
-        self.clients[client.client_id] = client
-
-    def __init__(self):
-        self.clients: dict[str, Client] = {}
-        self.accounts: dict[str, BankAccount] = {}
-
-    def check_time(self):
-        current_time = datetime.now().time()
-
-        if time(0, 0) <= current_time < time(5, 0):
-            raise InvalidOperationError('Operations are not allowed from 00:00 to 05:00')
-
-    def open_account(
-        self,
-        client_id: str,
-        account_type: AccountType,
-        name: str,
-        balance: float,
-        currency: CurrencyType,
-        *,
-        min_balance: float = 0,
-        interest_rate: float = 0,
-        commission: float = 0,
-        overdraft: float = 0,
-        limit: float = 0,
-        stocks: list[Stock] | None = None,
-        bonds: list[Bond] | None = None,
-        etf: list[Etf] | None = None
-    ):
-        if client_id not in self.clients:
-            raise InvalidOperationError('Client does not exist')
-
-        self.check_time()
-
-        client = self.clients[client_id]
-
-        if client.status is ClientStatus.BLOCKED:
-            raise InvalidOperationError('Client is blocked')
-
-        account = None
-
-        if account_type is AccountType.BANK:
-            account = BankAccount(name=name, balance=balance, currency=currency)
-        elif account_type is AccountType.SAVINGS:
-            account = SavingsAccount(name=name, balance=balance, currency=currency, min_balance=min_balance, interest_rate=interest_rate)
-        elif account_type is AccountType.PREMIUM:
-            account = PremiumAccount(name=name, balance=balance, currency=currency, commission=commission, overdraft=overdraft, limit=limit)
-        elif account_type is AccountType.INVESTMENT:
-            account = InvestmentAccount(name=name, balance=balance, currency=currency, stocks=stocks, bonds=bonds, etf=etf)
-        else:
-            raise InvalidOperationError('Invalid account type')
-
-        self.accounts[account.account_id] = account
-        client.accounts.append(account.account_id)
-
-        return account
-
-    def close_account(self, account_id: str):
-        if account_id not in self.accounts:
-            raise InvalidOperationError('Account does not exist')
-
-        self.check_time()
-
-        account = self.accounts[account_id]
-
-        if account.status is AccountStatus.CLOSED:
-            raise InvalidOperationError('Account is already closed')
-
-        account.status = AccountStatus.CLOSED
-
-    def freeze_account(self, account_id: str):
-        if account_id not in self.accounts:
-            raise InvalidOperationError('Account does not exist')
-
-        self.check_time()
-
-        account = self.accounts[account_id]
-
-        if account.status is AccountStatus.CLOSED:
-            raise InvalidOperationError('Account is closed and cannot be frozen')
-
-        if account.status is AccountStatus.FROZEN:
-            raise InvalidOperationError('Account is already frozen')
-
-        account.status = AccountStatus.FROZEN
-
-    def unfreeze_account(self, account_id: str):
-        if account_id not in self.accounts:
-            raise InvalidOperationError('Account does not exist')
-
-        self.check_time()
-
-        account = self.accounts[account_id]
-
-        if account.status is AccountStatus.CLOSED:
-            raise InvalidOperationError('Account is closed and cannot be unfrozen')
-
-        if account.status is not AccountStatus.FROZEN:
-            raise InvalidOperationError('Account is not frozen')
-
-        account.status = AccountStatus.ACTIVE
-
-    def authenticate_client(self, client_id: str, password: str):
-        if client_id not in self.clients:
-            raise InvalidOperationError('Client does not exist')
-
-        self.check_time()
-
-        client = self.clients[client_id]
-
-        if client.status is ClientStatus.BLOCKED:
-            raise InvalidOperationError('Client is blocked')
-
-        if client.password != password:
-            client.failed_login_attempts += 1
-
-            if client.failed_login_attempts >= 3:
-                client.status = ClientStatus.BLOCKED
-                raise InvalidOperationError('Client is blocked after 3 failed login attempts')
-
-            raise InvalidOperationError('Password is incorrect')
-
-        client.failed_login_attempts = 0
-
-        return client
-
-    def get_total_balance(self):
-        return sum(
-            account._balance
-            for account in self.accounts.values()
-            if account.status is not AccountStatus.CLOSED
-        )
-
-    def get_clients_ranking(self):
-        ranking = []
-
-        for client in self.clients.values():
-            total_balance = sum(
-                self.accounts[account_id]._balance
-                for account_id in client.accounts
-                if self.accounts[account_id].status is not AccountStatus.CLOSED
-            )
-
-            ranking.append({
-                "client_id": client.client_id,
-                "name": client.name,
-                "total_balance": total_balance
-            })
-
-        return sorted(ranking, key=lambda item: item["total_balance"], reverse=True)
-
 class TransactionType(Enum):
     INTERNAL_TRANSACTION = 1
     EXTERNAL_TRANSACTION = 2
@@ -627,6 +455,7 @@ class TransactionStatus(Enum):
     COMPLETED = 3
     FAILED = 4
     CANCELED = 5
+    BLOCKED = 6
 
 class TransactionPriority(Enum):
     HIGH = 1
@@ -748,6 +577,221 @@ _EXCHANGE_RATES = {
     (CurrencyType.CNY, CurrencyType.KZT): 58.0,
 }
 
+class AccountType(Enum):
+    BANK = "bank"
+    SAVINGS = "savings"
+    PREMIUM = "premium"
+    INVESTMENT = "investment"
+
+class Bank:
+    def add_client(
+        self,
+        name,
+        phone_number,
+        email,
+        age,
+        password: str,
+        client_id=None,
+    ):
+        client = Client(client_id, name, phone_number, email, age, password)
+
+        if client.client_id in self.clients:
+            raise InvalidOperationError('Client already exists')
+
+        self.clients[client.client_id] = client
+
+    def __init__(self):
+        self.clients: dict[str, Client] = {}
+        self.accounts: dict[str, BankAccount] = {}
+        self.transactions: list[Transaction] = []
+
+    def check_time(self):
+        current_time = datetime.now().time()
+
+        if time(0, 0) <= current_time < time(5, 0):
+            raise InvalidOperationError('Operations are not allowed from 00:00 to 05:00')
+
+    def open_account(
+        self,
+        client_id: str,
+        account_type: AccountType,
+        name: str,
+        balance: float,
+        currency: CurrencyType,
+        *,
+        min_balance: float = 0,
+        interest_rate: float = 0,
+        commission: float = 0,
+        overdraft: float = 0,
+        limit: float = 0,
+        stocks: list[Stock] | None = None,
+        bonds: list[Bond] | None = None,
+        etf: list[Etf] | None = None
+    ):
+        if client_id not in self.clients:
+            raise InvalidOperationError('Client does not exist')
+
+        self.check_time()
+
+        client = self.clients[client_id]
+
+        if client.status is ClientStatus.BLOCKED:
+            raise InvalidOperationError('Client is blocked')
+
+        account = None
+
+        if account_type is AccountType.BANK:
+            account = BankAccount(name=name, balance=balance, currency=currency)
+        elif account_type is AccountType.SAVINGS:
+            account = SavingsAccount(name=name, balance=balance, currency=currency, min_balance=min_balance, interest_rate=interest_rate)
+        elif account_type is AccountType.PREMIUM:
+            account = PremiumAccount(name=name, balance=balance, currency=currency, commission=commission, overdraft=overdraft, limit=limit)
+        elif account_type is AccountType.INVESTMENT:
+            account = InvestmentAccount(name=name, balance=balance, currency=currency, stocks=stocks, bonds=bonds, etf=etf)
+        else:
+            raise InvalidOperationError('Invalid account type')
+
+        self.accounts[account.account_id] = account
+        client.accounts.append(account.account_id)
+
+        return account
+
+    def close_account(self, account_id: str):
+        if account_id not in self.accounts:
+            raise InvalidOperationError('Account does not exist')
+
+        self.check_time()
+
+        account = self.accounts[account_id]
+
+        if account.status is AccountStatus.CLOSED:
+            raise InvalidOperationError('Account is already closed')
+
+        account.status = AccountStatus.CLOSED
+
+    def freeze_account(self, account_id: str):
+        if account_id not in self.accounts:
+            raise InvalidOperationError('Account does not exist')
+
+        self.check_time()
+
+        account = self.accounts[account_id]
+
+        if account.status is AccountStatus.CLOSED:
+            raise InvalidOperationError('Account is closed and cannot be frozen')
+
+        if account.status is AccountStatus.FROZEN:
+            raise InvalidOperationError('Account is already frozen')
+
+        account.status = AccountStatus.FROZEN
+
+    def unfreeze_account(self, account_id: str):
+        if account_id not in self.accounts:
+            raise InvalidOperationError('Account does not exist')
+
+        self.check_time()
+
+        account = self.accounts[account_id]
+
+        if account.status is AccountStatus.CLOSED:
+            raise InvalidOperationError('Account is closed and cannot be unfrozen')
+
+        if account.status is not AccountStatus.FROZEN:
+            raise InvalidOperationError('Account is not frozen')
+
+        account.status = AccountStatus.ACTIVE
+
+    def authenticate_client(self, client_id: str, password: str):
+        if client_id not in self.clients:
+            raise InvalidOperationError('Client does not exist')
+
+        self.check_time()
+
+        client = self.clients[client_id]
+
+        if client.status is ClientStatus.BLOCKED:
+            raise InvalidOperationError('Client is blocked')
+
+        if client.password != password:
+            client.failed_login_attempts += 1
+
+            if client.failed_login_attempts >= 3:
+                client.status = ClientStatus.BLOCKED
+                raise InvalidOperationError('Client is blocked after 3 failed login attempts')
+
+            raise InvalidOperationError('Password is incorrect')
+
+        client.failed_login_attempts = 0
+
+        return client
+
+    def register_transaction(self, transaction: Transaction):
+        if transaction is None:
+            raise InvalidOperationError('Transaction cannot be None')
+
+        self.transactions.append(transaction)
+
+    def get_total_balance(self):
+        return sum(
+            account._balance
+            for account in self.accounts.values()
+            if account.status is not AccountStatus.CLOSED
+        )
+
+    def get_clients_ranking(self):
+        ranking = []
+
+        for client in self.clients.values():
+            total_balance = sum(
+                self.accounts[account_id]._balance
+                for account_id in client.accounts
+                if self.accounts[account_id].status is not AccountStatus.CLOSED
+            )
+
+            ranking.append({
+                "client_id": client.client_id,
+                "name": client.name,
+                "total_balance": total_balance
+            })
+
+        return sorted(ranking, key=lambda item: item["total_balance"], reverse=True)
+
+    def create_transaction(
+        self,
+        queue: TransactionQueue,
+        amount: float,
+        currency: CurrencyType,
+        commission: float,
+        sender_account_id: str,
+        receiver_account_id: str,
+        transaction_type: TransactionType,
+        priority: TransactionPriority,
+        available_at: datetime | None = None,
+        transaction_id: str | None = None,
+    ):
+        if sender_account_id not in self.accounts:
+            raise InvalidOperationError('Sender account does not exist')
+
+        if transaction_type != TransactionType.EXTERNAL_TRANSACTION and receiver_account_id not in self.accounts:
+            raise InvalidOperationError('Receiver account does not exist')
+
+        transaction = Transaction(
+            transaction_id=transaction_id,
+            amount=amount,
+            currency=currency,
+            commission=commission,
+            sender_account_id=sender_account_id,
+            receiver_account_id=receiver_account_id,
+            transaction_type=transaction_type,
+            priority=priority,
+            available_at=available_at,
+        )
+
+        self.register_transaction(transaction)
+        queue.add_transaction(transaction)
+
+        return transaction
+
 class AuditLevel(Enum):
     INFO = 1
     WARNING = 2
@@ -777,7 +821,7 @@ class AuditEntry:
     def to_dict(self):
         return {
             "timestamp": self.timestamp.isoformat(),
-            "level": self.level.value,
+            "level": self.level.name,
             "event_type": self.event_type,
             "message": self.message,
             "client_id": self.client_id,
@@ -839,26 +883,250 @@ class AuditLog:
                 json.dump(entry.to_dict(), file, ensure_ascii=False)
                 file.write('\n')
 
+class RiskLevel(Enum):
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+
+class RiskAnalyzer:
+    def __init__(
+        self,
+        bank: Bank,
+        large_amount_threshold: float = 100000,
+        frequent_ops_window_minutes: int = 10,
+        frequent_ops_count_threshold: int = 3,
+    ):
+        self.bank = bank
+        self.large_amount_threshold = large_amount_threshold
+        self.frequent_ops_window_minutes = frequent_ops_window_minutes
+        self.frequent_ops_count_threshold = frequent_ops_count_threshold
+
+    def analyze_risk(self, transaction: Transaction) -> RiskLevel:
+        risk_score = 0
+
+        if self.is_large_amount(transaction):
+            risk_score += 1
+
+        if self.is_night_operation(transaction):
+            risk_score += 1
+
+        if self.is_new_receiver(transaction):
+            risk_score += 1
+
+        if self.is_frequent_operation(transaction):
+            risk_score += 1
+
+        if risk_score == 0:
+            return RiskLevel.LOW
+        elif risk_score == 1:
+            return RiskLevel.MEDIUM
+        else:
+            return RiskLevel.HIGH
+
+    def is_large_amount(self, transaction: Transaction) -> bool:
+        return transaction.amount >= self.large_amount_threshold
+
+    def is_night_operation(self, transaction: Transaction) -> bool:
+        transaction_time = transaction.created_at.time()
+        return time(0, 0) <= transaction_time < time(5, 0)
+
+    def is_new_receiver(self, transaction: Transaction) -> bool:
+        for old_transaction in self.bank.transactions:
+            if old_transaction.transaction_id == transaction.transaction_id:
+                continue
+
+            if (
+                    old_transaction.sender_account_id == transaction.sender_account_id
+                    and old_transaction.receiver_account_id == transaction.receiver_account_id
+                    and old_transaction.status == TransactionStatus.COMPLETED
+            ):
+                return False
+
+        return True
+
+    def is_frequent_operation(self, transaction: Transaction) -> bool:
+        window_start = datetime.now() - timedelta(minutes=self.frequent_ops_window_minutes)
+
+        count = 0
+
+        for old_transaction in self.bank.transactions:
+            if old_transaction.transaction_id == transaction.transaction_id:
+                continue
+
+            if old_transaction.sender_account_id != transaction.sender_account_id:
+                continue
+
+            if old_transaction.created_at < window_start:
+                continue
+
+            if old_transaction.status in (TransactionStatus.PENDING, TransactionStatus.PROCESSING,
+                                          TransactionStatus.COMPLETED):
+                count += 1
+
+            if count >= self.frequent_ops_count_threshold:
+                return True
+
+        return False
+
+class AuditReport:
+    def __init__(
+        self,
+        audit_log: AuditLog,
+        bank: Bank,
+        risk_analyzer: RiskAnalyzer
+    ):
+        self.audit_log = audit_log
+        self.bank = bank
+        self.risk_analyzer = risk_analyzer
+
+    def get_suspicious_transactions_report(self) -> list[dict]:
+        suspicious_transactions = []
+
+        for transaction in self.bank.transactions:
+            if transaction.status == TransactionStatus.CANCELED:
+                continue
+
+            risk_level = self.risk_analyzer.analyze_risk(transaction)
+
+            if risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH):
+                suspicious_transactions.append({
+                    "transaction_id": transaction.transaction_id,
+                    "sender_account_id": transaction.sender_account_id,
+                    "receiver_account_id": transaction.receiver_account_id,
+                    "amount": transaction.amount,
+                    "currency": transaction.currency.value,
+                    "risk_level": risk_level.name,
+                    "status": transaction.status.name,
+                })
+
+        return suspicious_transactions
+
+    def get_client_risk_profile(self, client_id: str) -> dict:
+        if client_id not in self.bank.clients:
+            raise InvalidOperationError('Client does not exist')
+
+        client = self.bank.clients[client_id]
+
+        client_transactions = []
+        risk_counts = {
+            RiskLevel.LOW: 0,
+            RiskLevel.MEDIUM: 0,
+            RiskLevel.HIGH: 0,
+        }
+
+        for transaction in self.bank.transactions:
+            if transaction.sender_account_id in client.accounts or \
+                    transaction.receiver_account_id in client.accounts:
+                client_transactions.append(transaction)
+
+                risk_level = self.risk_analyzer.analyze_risk(transaction)
+                risk_counts[risk_level] += 1
+
+        total_amount = sum(t.amount for t in client_transactions)
+
+        return {
+            "client_id": client_id,
+            "name": client.name,
+            "total_transactions": len(client_transactions),
+            "total_amount": total_amount,
+            "risk_breakdown": {
+                "low": risk_counts[RiskLevel.LOW],
+                "medium": risk_counts[RiskLevel.MEDIUM],
+                "high": risk_counts[RiskLevel.HIGH],
+            },
+        }
+
+    def get_error_statistics(self) -> dict:
+        stats = {
+            AuditLevel.INFO: 0,
+            AuditLevel.WARNING: 0,
+            AuditLevel.ERROR: 0,
+            AuditLevel.CRITICAL: 0,
+        }
+
+        for entry in self.audit_log.entries:
+            stats[entry.level] += 1
+
+        return {
+            "info": stats[AuditLevel.INFO],
+            "warning": stats[AuditLevel.WARNING],
+            "error": stats[AuditLevel.ERROR],
+            "critical": stats[AuditLevel.CRITICAL],
+        }
+
 class TransactionProcessor:
 
-    def __init__(self, bank: Bank):
+    def __init__(
+        self,
+        bank: Bank,
+        risk_analyzer: RiskAnalyzer,
+        audit_log: AuditLog
+    ):
         self.bank = bank
+        self.risk_analyzer = risk_analyzer
+        self.audit_log = audit_log
 
     def process_next_transaction(self, queue: TransactionQueue):
         if not queue.has_available_transactions():
             raise InvalidOperationError('There are no available pending transactions')
 
         transaction = queue.get_next_transaction()
+
+        risk_level = self.risk_analyzer.analyze_risk(transaction)
+        if risk_level == RiskLevel.HIGH:
+            transaction.status = TransactionStatus.BLOCKED
+            transaction.failure_reason = 'Transaction is blocked due to high risk'
+            transaction.completed_at = datetime.now()
+            self.audit_log.log(
+                level=AuditLevel.CRITICAL,
+                event_type='transaction_blocked',
+                message='Transaction blocked due to high risk',
+                account_id=transaction.sender_account_id,
+                transaction_id=transaction.transaction_id,
+                metadata={
+                    'risk_level': risk_level.name,
+                    'sender_account_id': transaction.sender_account_id,
+                    'receiver_account_id': transaction.receiver_account_id,
+                }
+            )
+            return
+
         transaction.status = TransactionStatus.PROCESSING
 
         try:
             self._process_transaction(transaction)
             transaction.status = TransactionStatus.COMPLETED
             transaction.completed_at = datetime.now()
+
+            self.audit_log.log(
+                level=AuditLevel.INFO,
+                event_type='transaction_completed',
+                message='Transaction completed successfully',
+                account_id=transaction.sender_account_id,
+                transaction_id=transaction.transaction_id,
+                metadata={
+                    'risk_level': risk_level.name,
+                    'sender_account_id': transaction.sender_account_id,
+                    'receiver_account_id': transaction.receiver_account_id,
+                }
+            )
         except Exception as ex:
             transaction.status = TransactionStatus.FAILED
             transaction.failure_reason = str(ex)
             transaction.completed_at = datetime.now()
+
+            self.audit_log.log(
+                level=AuditLevel.ERROR,
+                event_type='transaction_failed',
+                message=str(ex),
+                account_id=transaction.sender_account_id,
+                transaction_id=transaction.transaction_id,
+                metadata={
+                    'risk_level': risk_level.name,
+                    'sender_account_id': transaction.sender_account_id,
+                    'receiver_account_id': transaction.receiver_account_id,
+                }
+            )
 
     def _process_transaction(self, transaction: Transaction):
         self._validate_transaction(transaction)
