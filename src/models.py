@@ -2,6 +2,7 @@ from enum import Enum
 import abc
 import uuid
 from datetime import datetime, time
+import json
 
 class AccountStatus(Enum):
     ACTIVE = "active"
@@ -746,6 +747,97 @@ _EXCHANGE_RATES = {
     (CurrencyType.CNY, CurrencyType.EUR): 0.13,
     (CurrencyType.CNY, CurrencyType.KZT): 58.0,
 }
+
+class AuditLevel(Enum):
+    INFO = 1
+    WARNING = 2
+    ERROR = 3
+    CRITICAL = 4
+
+class AuditEntry:
+    def __init__(
+        self,
+        level: AuditLevel,
+        event_type: str,
+        message: str,
+        client_id: str | None,
+        account_id: str | None,
+        transaction_id: str | None,
+        metadata: dict[str, object]
+    ):
+        self.timestamp = datetime.now()
+        self.level = level
+        self.event_type = event_type
+        self.message = message
+        self.client_id = client_id
+        self.account_id = account_id
+        self.transaction_id = transaction_id
+        self.metadata = metadata or {}
+
+    def to_dict(self):
+        return {
+            "timestamp": self.timestamp.isoformat(),
+            "level": self.level.value,
+            "event_type": self.event_type,
+            "message": self.message,
+            "client_id": self.client_id,
+            "account_id": self.account_id,
+            "transaction_id": self.transaction_id,
+            "metadata": self.metadata,
+        }
+
+class AuditLog:
+    def __init__(self, file_name: str | None = None):
+        self.entries: list[AuditEntry] = []
+        self.file_name = file_name
+
+    def log(
+        self,
+        level: AuditLevel,
+        event_type: str,
+        message: str,
+        client_id: str | None = None,
+        account_id: str | None = None,
+        transaction_id: str | None = None,
+        metadata: dict[str, object] | None = None
+    ):
+        entry = AuditEntry(
+            level=level,
+            event_type=event_type,
+            message=message,
+            client_id=client_id,
+            account_id=account_id,
+            transaction_id=transaction_id,
+            metadata=metadata
+        )
+
+        self.entries.append(entry)
+
+        return entry
+
+    def filter_by_level(self, level: AuditLevel) -> list[AuditEntry]:
+        return [entry for entry in self.entries if entry.level == level]
+
+    def filter_by_client_id(self, client_id: str | None) -> list[AuditEntry]:
+        return [entry for entry in self.entries if entry.client_id == client_id]
+
+    def filter_by_account_id(self, account_id: str | None) -> list[AuditEntry]:
+        return [entry for entry in self.entries if entry.account_id == account_id]
+
+    def filter_by_date_range(self, start: datetime, end: datetime) -> list[AuditEntry]:
+        if start > end:
+            raise InvalidOperationError('Start date cannot be later than end date')
+
+        return [entry for entry in self.entries if start <= entry.timestamp <= end]
+
+    def save_to_file(self):
+        if self.file_name is None:
+            raise InvalidOperationError('File name is not set')
+
+        with open(self.file_name, 'w', encoding='utf-8') as file:
+            for entry in self.entries:
+                json.dump(entry.to_dict(), file, ensure_ascii=False)
+                file.write('\n')
 
 class TransactionProcessor:
 
