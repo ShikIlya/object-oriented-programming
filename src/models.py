@@ -949,10 +949,12 @@ class AuditLog:
         if self.file_name is None:
             raise InvalidOperationError('File name is not set')
 
+        payload = {
+            "entries": [entry.to_dict() for entry in self.entries]
+        }
+
         with open(self.file_name, 'w', encoding='utf-8') as file:
-            for entry in self.entries:
-                json.dump(entry.to_dict(), file, ensure_ascii=False)
-                file.write('\n')
+            json.dump(payload, file, ensure_ascii=False, indent=4)
 
 class RiskLevel(Enum):
     LOW = 1

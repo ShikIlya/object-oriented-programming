@@ -459,7 +459,7 @@ def show_audit_report(audit_log: AuditLog, bank: Bank, risk_analyzer: RiskAnalyz
 def main():
     bank = Bank()
     queue = TransactionQueue()
-    audit_log = AuditLog(file_name='audit_log.jsonl')
+    audit_log = AuditLog(file_name='audit_log.json')
     risk_analyzer = RiskAnalyzer(bank)
     processor = TransactionProcessor(bank, risk_analyzer, audit_log)
 
@@ -524,6 +524,9 @@ def main():
     print(report_builder.format_as_text(risk_report))
     report_builder.export_to_json(risk_report, "risk_report.json")
     report_builder.save_charts(risk_report, "risk_charts")
+
+    audit_log.save_to_file()
+    print('\nAudit log saved to audit_log.json')
 
     print('\nChecklist:')
     print('Initialization: done')
