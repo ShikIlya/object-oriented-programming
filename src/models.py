@@ -1252,11 +1252,9 @@ class TransactionProcessor:
         if transaction.currency != receiver_account.currency:
             raise InvalidOperationError("Transaction currency must match receiver account currency for internal transactions")
 
-        total_debit = transaction.amount + transaction.commission
-
         receiver_account.check_status()
         receiver_account.check_amount(transaction.amount)
-        sender_account.withdraw(total_debit)
+        sender_account.withdraw(transaction.amount)
         receiver_account.deposit(transaction.amount)
 
     def _process_external_transaction(
