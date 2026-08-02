@@ -493,6 +493,8 @@ class Transaction:
         self.priority = priority
         self.failure_reason = None
         self.available_at = available_at
+        self.attempts = 0
+        self.max_attempts = 3
 
 class TransactionQueue:
     def __init__(self):
@@ -1158,11 +1160,13 @@ class TransactionProcessor:
             )
 
         transaction.status = TransactionStatus.PROCESSING
+        transaction.attempts += 1
 
         try:
             self._process_transaction(transaction)
             transaction.status = TransactionStatus.COMPLETED
             transaction.completed_at = datetime.now()
+            transaction.failure_reason = None
 
             self.audit_log.log(
                 level=AuditLevel.INFO,
@@ -1177,22 +1181,45 @@ class TransactionProcessor:
                 }
             )
         except Exception as ex:
-            transaction.status = TransactionStatus.FAILED
             transaction.failure_reason = str(ex)
-            transaction.completed_at = datetime.now()
 
-            self.audit_log.log(
-                level=AuditLevel.ERROR,
-                event_type='transaction_failed',
-                message=str(ex),
-                account_id=transaction.sender_account_id,
-                transaction_id=transaction.transaction_id,
-                metadata={
-                    'risk_level': risk_level.name,
-                    'sender_account_id': transaction.sender_account_id,
-                    'receiver_account_id': transaction.receiver_account_id,
-                }
-            )
+            if transaction.attempts < transaction.max_attempts:
+                transaction.status = TransactionStatus.PENDING
+                transaction.available_at = datetime.now() + timedelta(minutes=5)
+
+                self.audit_log.log(
+                    level=AuditLevel.WARNING,
+                    event_type='transaction_retry_scheduled',
+                    message=str(ex),
+                    account_id=transaction.sender_account_id,
+                    transaction_id=transaction.transaction_id,
+                    metadata={
+                        'risk_level': risk_level.name,
+                        'attempts': transaction.attempts,
+                        'max_attempts': transaction.max_attempts,
+                        'next_retry_at': transaction.available_at.isoformat(),
+                        'sender_account_id': transaction.sender_account_id,
+                        'receiver_account_id': transaction.receiver_account_id,
+                    }
+                )
+            else:
+                transaction.status = TransactionStatus.FAILED
+                transaction.completed_at = datetime.now()
+
+                self.audit_log.log(
+                    level=AuditLevel.ERROR,
+                    event_type='transaction_failed',
+                    message=str(ex),
+                    account_id=transaction.sender_account_id,
+                    transaction_id=transaction.transaction_id,
+                    metadata={
+                        'risk_level': risk_level.name,
+                        'attempts': transaction.attempts,
+                        'max_attempts': transaction.max_attempts,
+                        'sender_account_id': transaction.sender_account_id,
+                        'receiver_account_id': transaction.receiver_account_id,
+                    }
+                )
 
     def _process_transaction(self, transaction: Transaction):
         self._validate_transaction(transaction)
