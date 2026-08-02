@@ -585,6 +585,11 @@ class AccountType(Enum):
     INVESTMENT = "investment"
 
 class Bank:
+    def __init__(self):
+        self.clients: dict[str, Client] = {}
+        self.accounts: dict[str, BankAccount] = {}
+        self.transactions: list[Transaction] = []
+
     def add_client(
         self,
         name,
@@ -600,11 +605,6 @@ class Bank:
             raise InvalidOperationError('Client already exists')
 
         self.clients[client.client_id] = client
-
-    def __init__(self):
-        self.clients: dict[str, Client] = {}
-        self.accounts: dict[str, BankAccount] = {}
-        self.transactions: list[Transaction] = []
 
     def check_time(self):
         current_time = datetime.now().time()
@@ -725,6 +725,53 @@ class Bank:
         client.failed_login_attempts = 0
 
         return client
+
+    def search_accounts(
+            self,
+            account_id: str | None = None,
+            client_id: str | None = None,
+            name: str | None = None,
+            status=None,
+            currency=None,
+    ) -> list[BankAccount]:
+        results = list(self.accounts.values())
+
+        if account_id is not None:
+            results = [
+                account for account in results
+                if account.account_id == account_id
+            ]
+
+        if client_id is not None:
+            if client_id not in self.clients:
+                raise InvalidOperationError("Client does not exist")
+
+            client_account_ids = set(self.clients[client_id].accounts)
+            results = [
+                account for account in results
+                if account.account_id in client_account_ids
+            ]
+
+        if name is not None:
+            name_lower = name.lower()
+            results = [
+                account for account in results
+                if name_lower in account.name.lower()
+            ]
+
+        if status is not None:
+            results = [
+                account for account in results
+                if account.status is status
+            ]
+
+        if currency is not None:
+            results = [
+                account for account in results
+                if account.currency is currency
+            ]
+
+        return results
 
     def register_transaction(self, transaction: Transaction):
         if transaction is None:
