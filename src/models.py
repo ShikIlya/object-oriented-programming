@@ -1248,6 +1248,8 @@ class TransactionProcessor:
 
         total_debit = transaction.amount + transaction.commission
 
+        receiver_account.check_status()
+        receiver_account.check_amount(transaction.amount)
         sender_account.withdraw(total_debit)
         receiver_account.deposit(transaction.amount)
 
