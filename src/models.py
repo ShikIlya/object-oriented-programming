@@ -316,40 +316,59 @@ class InvestmentAccount(BankAccount):
             self._balance -= amount
             return
 
-        needed = amount - self._balance
+        original_balance = self._balance
+        original_stocks = [(asset, asset.quantity) for asset in self._stocks]
+        original_bonds = [(asset, asset.quantity) for asset in self._bonds]
+        original_etf = [(asset, asset.quantity) for asset in self._etf]
 
-        for asset_list in [self._etf, self._bonds, self._stocks]:
-            if self._balance >= amount:
-                break
+        try:
+            needed = amount - self._balance
 
-            for asset in asset_list[:]:
+            for asset_list in [self._etf, self._bonds, self._stocks]:
                 if self._balance >= amount:
                     break
 
-                sell_quantity = int(needed // asset.price)
+                for asset in asset_list[:]:
+                    if self._balance >= amount:
+                        break
 
-                if needed % asset.price != 0:
-                    sell_quantity += 1
+                    sell_quantity = int(needed // asset.price)
+                    if needed % asset.price != 0:
+                        sell_quantity += 1
 
-                if sell_quantity <= 0:
-                    sell_quantity = 1
+                    if sell_quantity <= 0:
+                        sell_quantity = 1
 
-                if sell_quantity > asset.quantity:
-                    sell_quantity = asset.quantity
+                    if sell_quantity > asset.quantity:
+                        sell_quantity = asset.quantity
 
-                sold_value = sell_quantity * asset.price
-                asset.quantity -= sell_quantity
-                self._balance += sold_value
+                    sold_value = sell_quantity * asset.price
+                    asset.quantity -= sell_quantity
+                    self._balance += sold_value
+                    needed = amount - self._balance
 
-                needed = amount - self._balance
+                    if asset.quantity == 0:
+                        asset_list.remove(asset)
 
-                if asset.quantity == 0:
-                    asset_list.remove(asset)
+            if amount > self._balance:
+                raise InsufficientFundsError('Insufficient funds even after selling assets')
 
-        if amount > self._balance:
-            raise InsufficientFundsError('Insufficient funds even after selling assets')
+            self._balance -= amount
 
-        self._balance -= amount
+        except Exception:
+            self._balance = original_balance
+            self._stocks = [asset for asset, _ in original_stocks]
+            self._bonds = [asset for asset, _ in original_bonds]
+            self._etf = [asset for asset, _ in original_etf]
+
+            for asset, quantity in original_stocks:
+                asset.quantity = quantity
+            for asset, quantity in original_bonds:
+                asset.quantity = quantity
+            for asset, quantity in original_etf:
+                asset.quantity = quantity
+
+            raise
 
     def get_account_info(self):
         return {
