@@ -817,6 +817,8 @@ class Bank:
         available_at: datetime | None = None,
         transaction_id: str | None = None,
     ):
+        self.check_time()
+
         if sender_account_id not in self.accounts:
             raise InvalidOperationError('Sender account does not exist')
 
@@ -1115,6 +1117,8 @@ class TransactionProcessor:
         self.audit_log = audit_log
 
     def process_next_transaction(self, queue: TransactionQueue):
+        self.bank.check_time()
+
         if not queue.has_available_transactions():
             raise InvalidOperationError('There are no available pending transactions')
 
