@@ -1246,6 +1246,12 @@ class TransactionProcessor:
         if receiver_account is None:
             raise InvalidOperationError('Receiver account is required for this transaction type')
 
+        if transaction.currency != sender_account.currency:
+            raise InvalidOperationError("Transaction currency must match sender account currency")
+
+        if transaction.currency != receiver_account.currency:
+            raise InvalidOperationError("Transaction currency must match receiver account currency for internal transactions")
+
         total_debit = transaction.amount + transaction.commission
 
         receiver_account.check_status()
