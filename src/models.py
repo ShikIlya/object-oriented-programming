@@ -727,12 +727,12 @@ class Bank:
         return client
 
     def search_accounts(
-            self,
-            account_id: str | None = None,
-            client_id: str | None = None,
-            name: str | None = None,
-            status=None,
-            currency=None,
+        self,
+        account_id: str | None = None,
+        client_id: str | None = None,
+        name: str | None = None,
+        status=None,
+        currency=None,
     ) -> list[BankAccount]:
         results = list(self.accounts.values())
 
