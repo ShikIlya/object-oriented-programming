@@ -1315,6 +1315,15 @@ class TransactionProcessor:
         sender_account: BankAccount,
         receiver_account: BankAccount | None
     ):
+        if receiver_account is None:
+            raise InvalidOperationError('Receiver account is required for this transaction type')
+
+        if transaction.currency != sender_account.currency:
+            raise InvalidOperationError("Transaction currency must match sender account currency")
+
+        if transaction.currency != receiver_account.currency:
+            raise InvalidOperationError("Transaction currency must match receiver account currency for internal transactions")
+
         total_debit = transaction.amount + transaction.commission
         sender_account.withdraw(total_debit)
         # receiver_account.deposit(transaction.amout) Данный перевод не делается потому что счет вне этого банка
