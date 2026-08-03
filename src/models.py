@@ -1345,10 +1345,13 @@ class TransactionProcessor:
         if transaction.currency != sender_account.currency:
             raise InvalidOperationError('Transaction currency must match sender account currency')
 
+
         rate = self._get_exchange_rate(transaction.currency, receiver_account.currency)
 
         converted_amount = transaction.amount * rate
         total_debit = transaction.amount + transaction.commission
 
+        receiver_account.check_status()
+        receiver_account.check_amount(transaction.amount)
         sender_account.withdraw(total_debit)
         receiver_account.deposit(converted_amount)
