@@ -206,13 +206,19 @@ class PremiumAccount(BankAccount):
         self.check_status()
         self.check_amount(amount)
 
-        if self.limit < amount:
-            raise InvalidOperationError('Limit cannot be less than amount')
+        total_amount = amount + self.commission
 
-        if self._balance - amount >= -self.overdraft:
-            self._balance -= amount
-        else:
-            raise InsufficientFundsError('Amount exceeds overdraft')
+        if total_amount > self.limit:
+            raise InvalidOperationError(
+                'Withdrawal amount including commission exceeds limit'
+            )
+
+        if self._balance - total_amount < -self.overdraft:
+            raise InsufficientFundsError(
+                'Amount including commission exceeds overdraft'
+            )
+
+        self._balance -= total_amount
 
     def get_account_info(self):
         return {
@@ -801,29 +807,64 @@ class Bank:
         self.transactions.append(transaction)
 
     def get_total_balance(self):
-        return sum(
-            account._balance
-            for account in self.accounts.values()
-            if account.status is not AccountStatus.CLOSED
-        )
+        totals = {
+            currency.value: 0.0
+            for currency in CurrencyType
+        }
 
-    def get_clients_ranking(self):
+        for account in self.accounts.values():
+            if account.status is AccountStatus.CLOSED:
+                continue
+
+            totals[account.currency.value] += account._balance
+
+        return totals
+
+    def _convert_amount(
+        self,
+        amount: float,
+        from_currency: CurrencyType,
+        to_currency: CurrencyType
+    ) -> float:
+        if from_currency == to_currency:
+            return amount
+
+        key = (from_currency, to_currency)
+        if key not in _EXCHANGE_RATES:
+            raise InvalidOperationError('Exchange rate not available for this currency pair')
+
+        return amount * _EXCHANGE_RATES[key]
+
+    def get_clients_ranking(self, base_currency: CurrencyType = CurrencyType.RUB):
         ranking = []
 
         for client in self.clients.values():
-            total_balance = sum(
-                self.accounts[account_id]._balance
-                for account_id in client.accounts
-                if self.accounts[account_id].status is not AccountStatus.CLOSED
-            )
+            total_balance = 0.0
+
+            for account_id in client.accounts:
+                account = self.accounts[account_id]
+
+                if account.status is AccountStatus.CLOSED:
+                    continue
+
+                total_balance += self._convert_amount(
+                    account._balance,
+                    account.currency,
+                    base_currency
+                )
 
             ranking.append({
                 "client_id": client.client_id,
                 "name": client.name,
-                "total_balance": total_balance
+                "total_balance": total_balance,
+                "currency": base_currency.value,
             })
 
-        return sorted(ranking, key=lambda item: item["total_balance"], reverse=True)
+        return sorted(
+            ranking,
+            key=lambda item: item["total_balance"],
+            reverse=True
+        )
 
     def create_transaction(
         self,

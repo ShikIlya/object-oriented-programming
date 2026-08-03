@@ -1,13 +1,15 @@
 from models import (
     Bank,
     AuditLog,
-    RiskAnalyzer
+    RiskAnalyzer,
+    CurrencyType,
 )
 from datetime import datetime
 import json
 import csv
 from pathlib import Path
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 class ReportBuilder:
     def __init__(
@@ -33,15 +35,18 @@ class ReportBuilder:
         for transaction in self.bank.transactions:
             stats[transaction.status.name] += 1
 
-        top_clients_raw = self.bank.get_clients_ranking()[:3]
-        top_clients = []
+        total_balance = self.bank.get_total_balance()
+        ranking_currency = CurrencyType.RUB
+        top_clients_raw = self.bank.get_clients_ranking(ranking_currency)[:3]
 
+        top_clients = []
         for index, client_data in enumerate(top_clients_raw, start=1):
             top_clients.append({
                 "rank": index,
                 "client_id": client_data["client_id"],
                 "name": client_data["name"],
                 "total_balance": client_data["total_balance"],
+                "currency": client_data["currency"],
             })
 
         return {
@@ -51,7 +56,8 @@ class ReportBuilder:
                 "clients_count": len(self.bank.clients),
                 "accounts_count": len(self.bank.accounts),
                 "transactions_count": len(self.bank.transactions),
-                "total_balance": self.bank.get_total_balance(),
+                "total_balance": total_balance,
+                "ranking_currency": ranking_currency.value,
             },
             "details": {
                 "transaction_status_stats": stats,
@@ -64,16 +70,16 @@ class ReportBuilder:
                     "values": list(stats.values()),
                 },
                 "bar_chart": {
-                    "title": "Top Clients by Balance",
+                    "title": "Bank Balance by Currency",
                     "ylabel": "Balance",
-                    "labels": [client["name"] for client in top_clients],
-                    "values": [client["total_balance"] for client in top_clients],
+                    "labels": list(total_balance.keys()),
+                    "values": list(total_balance.values()),
                 },
                 "line_chart": {
-                    "title": "Bank Balance Movement",
-                    "ylabel": "Balance",
-                    "labels": ["Initial", "Current"],
-                    "values": [0, self.bank.get_total_balance()],
+                    "title": "Top Clients by Balance",
+                    "ylabel": f"Balance ({ranking_currency.value.upper()})",
+                    "labels": [client["name"] for client in top_clients],
+                    "values": [client["total_balance"] for client in top_clients],
                 },
             },
         }
@@ -92,6 +98,24 @@ class ReportBuilder:
             account_info = account.get_account_info()
             accounts.append(account_info)
             total_balance += account._balance
+
+        base_currency = CurrencyType.RUB
+        account_labels = []
+        account_balances_in_base_currency = []
+
+        for account in accounts:
+            account_currency = CurrencyType(account["currency"])
+
+            converted_balance = self.bank._convert_amount(
+                account["balance"],
+                account_currency,
+                base_currency,
+            )
+
+            account_labels.append(
+                f'{account["name"]} ({account["currency"].upper()})'
+            )
+            account_balances_in_base_currency.append(converted_balance)
 
         transactions = []
         suspicious_transactions = []
@@ -171,16 +195,16 @@ class ReportBuilder:
                     "values": list(status_stats.values()),
                 },
                 "bar_chart": {
-                    "title": "Client Accounts Balance",
-                    "ylabel": "Balance",
-                    "labels": [account["name"] for account in accounts],
-                    "values": [account["balance"] for account in accounts],
+                    "title": "Client Account Balances in RUB",
+                    "ylabel": "Balance (RUB)",
+                    "labels": account_labels,
+                    "values": account_balances_in_base_currency,
                 },
                 "line_chart": {
-                    "title": "Client Balance Movement",
-                    "ylabel": "Balance",
-                    "labels": [account["name"] for account in accounts],
-                    "values": [account["balance"] for account in accounts],
+                    "title": "Client Account Balances in RUB",
+                    "ylabel": "Balance (RUB)",
+                    "labels": account_labels,
+                    "values": account_balances_in_base_currency,
                 },
             },
         }
@@ -340,9 +364,9 @@ class ReportBuilder:
                 lines.append(
                     f"{client.get('rank', '')}. "
                     f"{client.get('name', 'Unknown')} | "
-                    f"{client.get('total_balance', 0)}"
+                    f"{client.get('total_balance', 0)} "
+                    f"{str(client.get('currency', '')).upper()}"
                 )
-
         elif report_type == "client":
             accounts = details.get("accounts", [])
             transactions = details.get("transactions", [])
@@ -454,24 +478,41 @@ class ReportBuilder:
         return "\n".join(lines)
 
     def export_to_json(self, report_data: dict, file_path: str) -> None:
-        with open(file_path, "w", encoding="utf-8") as file:
+        output_path = Path(file_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with output_path.open("w", encoding="utf-8") as file:
             json.dump(report_data, file, ensure_ascii=False, indent=4)
 
     def export_to_csv(self, report_data: dict, file_path: str) -> None:
+        report_type = report_data.get("report_type")
         details = report_data.get("details", {})
-        top_clients = details.get("top_clients", [])
 
-        if not top_clients:
-            with open(file_path, "w", encoding="utf-8", newline="") as file:
+        if report_type == "bank":
+            rows = details.get("top_clients", [])
+
+        elif report_type == "client":
+            rows = details.get("transactions", [])
+
+        elif report_type == "risk":
+            rows = details.get("suspicious_transactions", [])
+
+        else:
+            raise ValueError(f"Unsupported report type: {report_type}")
+
+        output_path = Path(file_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with output_path.open("w", encoding="utf-8", newline="") as file:
+            if not rows:
                 file.write("")
-            return
+                return
 
-        fieldnames = list(top_clients[0].keys())
-
-        with open(file_path, "w", encoding="utf-8", newline="") as file:
+            fieldnames = list(rows[0].keys())
             writer = csv.DictWriter(file, fieldnames=fieldnames)
+
             writer.writeheader()
-            writer.writerows(top_clients)
+            writer.writerows(rows)
 
     def save_charts(self, report_data: dict, output_dir: str) -> list[str]:
         charts_data = report_data.get("charts_data", {})
@@ -481,6 +522,9 @@ class ReportBuilder:
         output_path.mkdir(parents=True, exist_ok=True)
 
         saved_files = []
+
+        def format_number(value, _):
+            return f"{value:,.0f}".replace(",", " ")
 
         def save_pie_chart(data: dict, filename: str):
             labels = data.get("labels", [])
@@ -534,10 +578,17 @@ class ReportBuilder:
             if not labels or not values:
                 return
 
+            if len(labels) != len(values):
+                return
+
+            if not all(isinstance(value, (int, float)) for value in values):
+                return
+
             fig, ax = plt.subplots(figsize=(8, 5))
             ax.bar(labels, values)
             ax.set_title(title)
             ax.set_ylabel(ylabel)
+            ax.yaxis.set_major_formatter(FuncFormatter(format_number))
             ax.tick_params(axis="x", rotation=30)
             plt.setp(ax.get_xticklabels(), ha="right")
             fig.tight_layout()
@@ -556,10 +607,30 @@ class ReportBuilder:
             if not labels or not values:
                 return
 
+            if len(labels) != len(values):
+                return
+
+            if not all(isinstance(value, (int, float)) for value in values):
+                return
+
             fig, ax = plt.subplots(figsize=(8, 5))
-            ax.plot(labels, values, marker="o")
+            ax.plot(labels, values, marker="o", linewidth=2)
+
             ax.set_title(title)
             ax.set_ylabel(ylabel)
+
+            ax.yaxis.set_major_formatter(FuncFormatter(format_number))
+
+            for label, value in zip(labels, values):
+                ax.annotate(
+                    format_number(value, None),
+                    (label, value),
+                    textcoords="offset points",
+                    xytext=(0, 8),
+                    ha="center",
+                    fontsize=9,
+                )
+
             ax.tick_params(axis="x", rotation=30)
             plt.setp(ax.get_xticklabels(), ha="right")
             fig.tight_layout()
@@ -570,6 +641,7 @@ class ReportBuilder:
             saved_files.append(str(file_path))
 
         pie_data = charts_data.get("pie_chart")
+
         if pie_data:
             save_pie_chart(pie_data, f"{report_type}_pie_chart.png")
 

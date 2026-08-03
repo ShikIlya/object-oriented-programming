@@ -502,28 +502,31 @@ def main():
 
     report_builder = ReportBuilder(bank, audit_log, risk_analyzer)
 
-    print("\nBANK REPORT")
     bank_report = report_builder.build_bank_report()
+    client_report = report_builder.build_client_report("client_1")
+    risk_report = report_builder.build_risk_report()
+
+    print("\nBANK REPORT")
     text = report_builder.format_as_text(bank_report)
     print(text)
 
-    report_builder.export_to_json(bank_report, "bank_report.json")
-    report_builder.export_to_csv(bank_report, "top_clients.csv")
-    report_builder.save_charts(bank_report, "charts")
-
     print("\nCLIENT REPORT")
-    client_report = report_builder.build_client_report("client_1")
     print(report_builder.format_as_text(client_report))
 
-    report_builder.export_to_json(client_report, "client_report.json")
-    report_builder.save_charts(client_report, "client_charts")
-
-
     print("\nRISK REPORT")
-    risk_report = report_builder.build_risk_report()
     print(report_builder.format_as_text(risk_report))
-    report_builder.export_to_json(risk_report, "risk_report.json")
-    report_builder.save_charts(risk_report, "risk_charts")
+
+    report_builder.export_to_json(bank_report, "reports/bank_report.json")
+    report_builder.export_to_json(client_report, "reports/client_report.json")
+    report_builder.export_to_json(risk_report, "reports/risk_report.json")
+
+    report_builder.save_charts(bank_report, "charts/bank_charts")
+    report_builder.save_charts(client_report, "charts/client_charts")
+    report_builder.save_charts(risk_report, "charts/risk_charts")
+
+    report_builder.export_to_csv(bank_report, "reports/bank_report.csv")
+    report_builder.export_to_csv(client_report, "reports/client_report.csv")
+    report_builder.export_to_csv(risk_report, "reports/risk_report.csv")
 
     audit_log.save_to_file()
     print('\nAudit log saved to audit_log.json')
