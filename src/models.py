@@ -1050,9 +1050,9 @@ class RiskAnalyzer:
                 continue
 
             if (
-                    old_transaction.sender_account_id == transaction.sender_account_id
-                    and old_transaction.receiver_account_id == transaction.receiver_account_id
-                    and old_transaction.status == TransactionStatus.COMPLETED
+                old_transaction.sender_account_id == transaction.sender_account_id
+                and old_transaction.receiver_account_id == transaction.receiver_account_id
+                and old_transaction.status == TransactionStatus.COMPLETED
             ):
                 return False
 
