@@ -1059,7 +1059,9 @@ class RiskAnalyzer:
         return True
 
     def is_frequent_operation(self, transaction: Transaction) -> bool:
-        window_start = datetime.now() - timedelta(minutes=self.frequent_ops_window_minutes)
+        window_start = datetime.now() - timedelta(
+            minutes=self.frequent_ops_window_minutes
+        )
 
         count = 0
 
@@ -1070,18 +1072,18 @@ class RiskAnalyzer:
             if old_transaction.sender_account_id != transaction.sender_account_id:
                 continue
 
-            if old_transaction.created_at < window_start:
+            if old_transaction.status is not TransactionStatus.COMPLETED:
                 continue
 
-            if old_transaction.status in (TransactionStatus.PENDING, TransactionStatus.PROCESSING,
-                                          TransactionStatus.COMPLETED):
-                count += 1
+            if old_transaction.completed_at is None:
+                continue
 
-            if count >= self.frequent_ops_count_threshold:
-                return True
+            if old_transaction.completed_at < window_start:
+                continue
 
-        return False
+            count += 1
 
+        return count >= self.frequent_ops_count_threshold
 class AuditReport:
     def __init__(
         self,
