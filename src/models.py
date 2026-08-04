@@ -1314,7 +1314,7 @@ class TransactionProcessor:
         if transaction.transaction_type == TransactionType.INTERNAL_TRANSACTION:
             self._process_internal_transaction(transaction, sender_account, receiver_account)
         elif transaction.transaction_type == TransactionType.EXTERNAL_TRANSACTION:
-            self._process_external_transaction(transaction, sender_account, receiver_account)
+            self._process_external_transaction(transaction, sender_account)
         elif transaction.transaction_type == TransactionType.EXCHANGE_TRANSACTION:
             self._process_exchange_transaction(transaction, sender_account, receiver_account)
         else:
@@ -1354,16 +1354,9 @@ class TransactionProcessor:
         self,
         transaction: Transaction,
         sender_account: BankAccount,
-        receiver_account: BankAccount | None
     ):
-        if receiver_account is None:
-            raise InvalidOperationError('Receiver account is required for this transaction type')
-
         if transaction.currency != sender_account.currency:
             raise InvalidOperationError("Transaction currency must match sender account currency")
-
-        if transaction.currency != receiver_account.currency:
-            raise InvalidOperationError("Transaction currency must match receiver account currency for internal transactions")
 
         total_debit = transaction.amount + transaction.commission
         sender_account.withdraw(total_debit)
