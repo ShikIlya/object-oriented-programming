@@ -5,7 +5,7 @@ from models import (
     CurrencyType,
     TransactionStatus
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import csv
 from pathlib import Path
@@ -37,10 +37,11 @@ class ReportBuilder:
             stats[transaction.status.name] += 1
 
         total_balance = self.bank.get_total_balance()
+
         ranking_currency = CurrencyType.RUB
         top_clients_raw = self.bank.get_clients_ranking(ranking_currency)[:3]
 
-        top_clients = []
+        top_clients: list[dict] = []
         for index, client_data in enumerate(top_clients_raw, start=1):
             top_clients.append({
                 "rank": index,
@@ -49,6 +50,64 @@ class ReportBuilder:
                 "total_balance": client_data["total_balance"],
                 "currency": client_data["currency"],
             })
+
+        completed_transactions = [
+            t for t in self.bank.transactions
+            if t.status is TransactionStatus.COMPLETED
+        ]
+
+        completed_transactions.sort(
+            key=lambda t: t.completed_at or t.created_at
+        )
+
+        def current_total_balance_rub() -> float:
+            total = 0.0
+            for currency_value, amount in total_balance.items():
+                currency = CurrencyType(currency_value)
+                total += self.bank._convert_amount(
+                    amount,
+                    currency,
+                    CurrencyType.RUB,
+                )
+            return total
+
+        running_balance = current_total_balance_rub()
+        daily_bank_balance: dict[str, float] = {}
+
+        if not completed_transactions:
+            day_key = datetime.now().strftime("%Y-%m-%d")
+            daily_bank_balance[day_key] = running_balance
+        else:
+            first_ts = (
+                    completed_transactions[0].completed_at
+                    or completed_transactions[0].created_at
+            )
+            prev_day_key = (first_ts - timedelta(days=1)).strftime("%Y-%m-%d")
+            daily_bank_balance[prev_day_key] = running_balance
+
+            for transaction in completed_transactions:
+                if transaction.sender_account_id in self.bank.accounts:
+                    running_balance -= self.bank._convert_amount(
+                        transaction.amount,
+                        transaction.currency,
+                        CurrencyType.RUB,
+                    )
+
+                if transaction.receiver_account_id in self.bank.accounts:
+                    running_balance += self.bank._convert_amount(
+                        transaction.amount,
+                        transaction.currency,
+                        CurrencyType.RUB,
+                    )
+
+                ts = transaction.completed_at or transaction.created_at
+                day_key = ts.strftime("%Y-%m-%d")
+                daily_bank_balance[day_key] = running_balance
+
+        bank_balance_labels = sorted(daily_bank_balance.keys())
+        bank_balance_values = [
+            daily_bank_balance[day] for day in bank_balance_labels
+        ]
 
         return {
             "report_type": "bank",
@@ -71,16 +130,16 @@ class ReportBuilder:
                     "values": list(stats.values()),
                 },
                 "bar_chart": {
-                    "title": "Bank Balance by Currency",
-                    "ylabel": "Balance",
-                    "labels": list(total_balance.keys()),
-                    "values": list(total_balance.values()),
-                },
-                "line_chart": {
                     "title": "Top Clients by Balance",
                     "ylabel": f"Balance ({ranking_currency.value.upper()})",
                     "labels": [client["name"] for client in top_clients],
                     "values": [client["total_balance"] for client in top_clients],
+                },
+                "line_chart": {
+                    "title": "Bank Balance Movement",
+                    "ylabel": "Balance (RUB)",
+                    "labels": bank_balance_labels,
+                    "values": bank_balance_values,
                 },
             },
         }
@@ -91,35 +150,39 @@ class ReportBuilder:
 
         client = self.bank.clients[client_id]
 
-        accounts = []
-        total_balance = 0
+        accounts: list[dict] = []
+        total_balance_rub = 0.0
 
         for account_id in client.accounts:
             account = self.bank.accounts[account_id]
             account_info = account.get_account_info()
             accounts.append(account_info)
-            total_balance += account._balance
 
-        base_currency = CurrencyType.RUB
-        account_labels = []
-        account_balances_in_base_currency = []
+            total_balance_rub += self.bank._convert_amount(
+                account._balance,
+                account.currency,
+                CurrencyType.RUB,
+            )
+
+        # --- Accounts for bar chart ---
+        account_labels: list[str] = []
+        account_balances_in_rub: list[float] = []
 
         for account in accounts:
             account_currency = CurrencyType(account["currency"])
-
             converted_balance = self.bank._convert_amount(
                 account["balance"],
                 account_currency,
-                base_currency,
+                CurrencyType.RUB,
             )
 
             account_labels.append(
                 f'{account["name"]} ({account["currency"].upper()})'
             )
-            account_balances_in_base_currency.append(converted_balance)
+            account_balances_in_rub.append(converted_balance)
 
-        transactions = []
-        suspicious_transactions = []
+        transactions: list[dict] = []
+        suspicious_transactions: list[dict] = []
 
         status_stats = {
             "PENDING": 0,
@@ -137,7 +200,6 @@ class ReportBuilder:
                     transaction.sender_account_id in client_account_ids
                     or transaction.receiver_account_id in client_account_ids
             )
-
             if not is_client_transaction:
                 continue
 
@@ -164,14 +226,15 @@ class ReportBuilder:
 
             if self.risk_analyzer is not None:
                 risk_level = self.risk_analyzer.analyze_risk(transaction)
-
-                if risk_level.name in ("MEDIUM", "HIGH") and transaction.status.name != "CANCELED":
+                if (
+                        risk_level.name in ("MEDIUM", "HIGH")
+                        and transaction.status is not TransactionStatus.CANCELED
+                ):
                     suspicious_transactions.append({
                         **transaction_data,
                         "risk_level": risk_level.name,
                     })
 
-        # Balance movement history
         completed_transactions = [
             t
             for t in self.bank.transactions
@@ -182,33 +245,54 @@ class ReportBuilder:
                )
         ]
 
-        completed_transactions.sort(key=lambda t: t.completed_at)
+        completed_transactions.sort(
+            key=lambda t: t.completed_at or t.created_at
+        )
 
-        balance_history = []
-        running_balance = 0.0
+        def client_total_balance_rub_at_current_accounts() -> float:
+            total = 0.0
+            for account in accounts:
+                total += self.bank._convert_amount(
+                    account["balance"],
+                    CurrencyType(account["currency"]),
+                    CurrencyType.RUB,
+                )
+            return total
 
-        for transaction in completed_transactions:
-            is_sender = transaction.sender_account_id in client_account_ids
-            is_receiver = transaction.receiver_account_id in client_account_ids
+        running_balance = client_total_balance_rub_at_current_accounts()
 
-            if is_sender:
-                running_balance -= transaction.amount
-            if is_receiver:
-                running_balance += transaction.amount
+        daily_points: dict[str, float] = {}
 
-            balance_history.append({
-                "timestamp": transaction.completed_at,
-                "balance": running_balance,
-            })
+        if not completed_transactions:
+            day_key = datetime.now().strftime("%Y-%m-%d")
+            daily_points[day_key] = running_balance
+        else:
+            first_ts = completed_transactions[0].completed_at or completed_transactions[0].created_at
+            first_day = (first_ts - timedelta(days=1)).strftime("%Y-%m-%d")
+            daily_points[first_day] = running_balance
 
-        balance_history_labels = [
-            entry["timestamp"].strftime("%Y-%m-%d %H:%M")
-            for entry in balance_history
-        ]
-        balance_history_values = [
-            entry["balance"]
-            for entry in balance_history
-        ]
+            for transaction in completed_transactions:
+                if transaction.sender_account_id in client_account_ids:
+                    running_balance -= self.bank._convert_amount(
+                        transaction.amount,
+                        transaction.currency,
+                        CurrencyType.RUB,
+                    )
+
+                if transaction.receiver_account_id in client_account_ids:
+                    running_balance += self.bank._convert_amount(
+                        transaction.amount,
+                        transaction.currency,
+                        CurrencyType.RUB,
+                    )
+
+                ts = transaction.completed_at or transaction.created_at
+                day_key = ts.strftime("%Y-%m-%d")
+                daily_points[day_key] = running_balance
+
+        sorted_days = sorted(daily_points.keys())
+        balance_history_labels = sorted_days
+        balance_history_values = [daily_points[day] for day in sorted_days]
 
         return {
             "report_type": "client",
@@ -218,7 +302,7 @@ class ReportBuilder:
                 "client_name": client.name,
                 "client_status": client.status.value,
                 "accounts_count": len(accounts),
-                "total_balance": total_balance,
+                "total_balance": total_balance_rub,
                 "transactions_count": len(transactions),
                 "suspicious_transactions_count": len(suspicious_transactions),
             },
@@ -238,7 +322,7 @@ class ReportBuilder:
                     "title": "Client Account Balances in RUB",
                     "ylabel": "Balance (RUB)",
                     "labels": account_labels,
-                    "values": account_balances_in_base_currency,
+                    "values": account_balances_in_rub,
                 },
                 "line_chart": {
                     "title": "Client Balance Movement",
@@ -653,26 +737,30 @@ class ReportBuilder:
             if not all(isinstance(value, (int, float)) for value in values):
                 return
 
-            fig, ax = plt.subplots(figsize=(8, 5))
-            ax.plot(labels, values, marker="o", linewidth=2)
+            fig, ax = plt.subplots(figsize=(10, 5))
+
+            x_indices = list(range(len(values)))
+            ax.plot(x_indices, values, marker="o", linewidth=2)
 
             ax.set_title(title)
             ax.set_ylabel(ylabel)
+            ax.set_xlabel("Time")
 
             ax.yaxis.set_major_formatter(FuncFormatter(format_number))
 
-            for label, value in zip(labels, values):
-                ax.annotate(
-                    format_number(value, None),
-                    (label, value),
-                    textcoords="offset points",
-                    xytext=(0, 8),
-                    ha="center",
-                    fontsize=9,
-                )
+            if len(labels) <= 8:
+                xticks = x_indices
+            else:
+                step = max(1, len(labels) // 8)
+                xticks = list(range(0, len(labels), step))
 
-            ax.tick_params(axis="x", rotation=30)
-            plt.setp(ax.get_xticklabels(), ha="right")
+            ax.set_xticks(xticks)
+            ax.set_xticklabels(
+                [labels[i] for i in xticks],
+                rotation=30,
+                ha="right",
+            )
+
             fig.tight_layout()
 
             file_path = output_path / filename
