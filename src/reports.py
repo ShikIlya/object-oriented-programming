@@ -3,6 +3,7 @@ from models import (
     AuditLog,
     RiskAnalyzer,
     CurrencyType,
+    TransactionStatus
 )
 from datetime import datetime
 import json
@@ -170,6 +171,45 @@ class ReportBuilder:
                         "risk_level": risk_level.name,
                     })
 
+        # Balance movement history
+        completed_transactions = [
+            t
+            for t in self.bank.transactions
+            if t.status is TransactionStatus.COMPLETED
+               and (
+                       t.sender_account_id in client_account_ids
+                       or t.receiver_account_id in client_account_ids
+               )
+        ]
+
+        completed_transactions.sort(key=lambda t: t.completed_at)
+
+        balance_history = []
+        running_balance = 0.0
+
+        for transaction in completed_transactions:
+            is_sender = transaction.sender_account_id in client_account_ids
+            is_receiver = transaction.receiver_account_id in client_account_ids
+
+            if is_sender:
+                running_balance -= transaction.amount
+            if is_receiver:
+                running_balance += transaction.amount
+
+            balance_history.append({
+                "timestamp": transaction.completed_at,
+                "balance": running_balance,
+            })
+
+        balance_history_labels = [
+            entry["timestamp"].strftime("%Y-%m-%d %H:%M")
+            for entry in balance_history
+        ]
+        balance_history_values = [
+            entry["balance"]
+            for entry in balance_history
+        ]
+
         return {
             "report_type": "client",
             "generated_at": datetime.now().isoformat(),
@@ -201,10 +241,10 @@ class ReportBuilder:
                     "values": account_balances_in_base_currency,
                 },
                 "line_chart": {
-                    "title": "Client Account Balances in RUB",
+                    "title": "Client Balance Movement",
                     "ylabel": "Balance (RUB)",
-                    "labels": account_labels,
-                    "values": account_balances_in_base_currency,
+                    "labels": balance_history_labels,
+                    "values": balance_history_values,
                 },
             },
         }

@@ -8,6 +8,9 @@ from models import (
     CurrencyType,
     TransactionType,
     TransactionPriority,
+    Stock,
+    Bond,
+    Etf
 )
 from reports import (
     ReportBuilder
@@ -148,6 +151,24 @@ DEMO_ACCOUNTS = [
         "currency": CurrencyType.CNY,
         "min_balance": 100000,
         "interest_rate": 3.8,
+    },
+    {
+        "account_id": "acc_11",
+        "client_id": "client_1",
+        "account_type": AccountType.INVESTMENT,
+        "name": "Ivan investments",
+        "balance": 200000,
+        "currency": CurrencyType.RUB,
+        "stocks": [
+            Stock(id="stock_1", name="SBER", price=250.0, quantity=100),
+            Stock(id="stock_2", name="GAZP", price=180.0, quantity=150),
+        ],
+        "bonds": [
+            Bond(id="bond_1", name="OFZ-26", price=950.0, quantity=50),
+        ],
+        "etf": [
+            Etf(id="etf_1", name="VTB SP500", price=1200.0, quantity=30),
+        ],
     },
 ]
 
@@ -493,6 +514,17 @@ def main():
     process_all_transactions(bank, queue, processor)
 
     show_client_accounts(bank, 'client_1')
+
+    inv_account = bank.accounts[account_ids["acc_11"]]
+    print("\nInvestment account info:")
+    print(inv_account.get_account_info())
+
+    projection = inv_account.project_yearly_growth(annual_rate=12.0)
+    print("\nYearly projection (12%):")
+    print(f"Current value: {projection['current_value']:.2f} RUB")
+    print(f"Projected value: {projection['projected_value']:.2f} RUB")
+    print(f"Projected growth: {projection['projected_growth']:.2f} RUB")
+
     show_client_history(bank, 'client_1')
     show_suspicious_transactions(bank, risk_analyzer)
     show_reports(bank)
