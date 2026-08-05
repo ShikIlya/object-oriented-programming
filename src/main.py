@@ -10,11 +10,13 @@ from models import (
     TransactionPriority,
     Stock,
     Bond,
-    Etf
+    Etf,
+    TransactionStatus
 )
 from reports import (
     ReportBuilder
 )
+from datetime import datetime
 
 DEMO_CLIENTS = [
     {
@@ -305,32 +307,56 @@ def process_all_transactions(
     queue: TransactionQueue,
     processor: TransactionProcessor,
 ):
-    print('\nProcessing transactions:')
-
     processed_count = 0
 
-    while queue.has_available_transactions():
-        transaction = queue.get_next_transaction()
+    while True:
+        if queue.has_available_transactions():
+            transaction = queue.get_next_transaction()
 
-        print(
-            f'Processing: {transaction.transaction_id} | '
-            f'{transaction.transaction_type.name} | '
-            f'{transaction.amount} {transaction.currency.value}'
-        )
+            processor.process_next_transaction(queue)
+            processed_count += 1
 
-        processor.process_next_transaction(queue)
-        processed_count += 1
+            if transaction.failure_reason is not None:
+                print(f"Reason: {transaction.failure_reason}")
 
-        print(
-            f'Result: {transaction.transaction_id} | '
-            f'{transaction.status.name}'
-        )
+            continue
 
-        if transaction.failure_reason is not None:
-            print(f'Reason: {transaction.failure_reason}')
+        retry_transactions = [
+            t for t in queue.transactions
+            if t.status is TransactionStatus.PENDING
+            and t.available_at is not None
+        ]
 
-    print(f'\nProcessed transactions: {processed_count}')
+        if not retry_transactions:
+            break
 
+        for t in retry_transactions:
+            t.available_at = datetime.now()
+
+    summary = {
+        "PENDING": 0,
+        "PROCESSING": 0,
+        "COMPLETED": 0,
+        "FAILED": 0,
+        "CANCELED": 0,
+        "BLOCKED": 0,
+    }
+
+    for t in bank.transactions:
+        summary[t.status.name] += 1
+
+    for status, count in summary.items():
+        print(f"  {status}: {count}")
+
+    pending_with_reason = [
+        t for t in bank.transactions
+        if t.status is TransactionStatus.PENDING
+        and t.failure_reason is not None
+    ]
+
+    if pending_with_reason:
+        for t in pending_with_reason:
+            print(f"  {t.transaction_id}: {t.failure_reason}")
 
 def show_client_accounts(bank: Bank, client_id: str):
     client = bank.clients[client_id]
