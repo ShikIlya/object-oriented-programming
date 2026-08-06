@@ -30,9 +30,6 @@ class InsufficientFundsError(Exception):
     pass
 
 class AbstractAccount(abc.ABC):
-    account_id: str
-    name: str
-    status: AccountStatus = AccountStatus.ACTIVE
     _balance: float = 0
 
     def __init__(
@@ -1084,6 +1081,7 @@ class RiskAnalyzer:
             count += 1
 
         return count >= self.frequent_ops_count_threshold
+
 class AuditReport:
     def __init__(
         self,
@@ -1150,6 +1148,7 @@ class AuditReport:
                 "medium": risk_counts[RiskLevel.MEDIUM],
                 "high": risk_counts[RiskLevel.HIGH],
             },
+            "is_suspicious": client.is_suspicious,
         }
 
     def get_error_statistics(self) -> dict:
@@ -1191,6 +1190,20 @@ class TransactionProcessor:
         transaction = queue.get_next_transaction()
 
         risk_level = self.risk_analyzer.analyze_risk(transaction)
+
+        sender_account = self._get_sender_account(transaction)
+        sender_client = next(
+            (
+                client
+                for client in self.bank.clients.values()
+                if sender_account.account_id in client.accounts
+            ),
+            None,
+        )
+
+        if sender_client is not None and risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH):
+            sender_client.is_suspicious = True
+
         if risk_level == RiskLevel.HIGH:
             transaction.status = TransactionStatus.BLOCKED
             transaction.failure_reason = 'Transaction is blocked due to high risk'

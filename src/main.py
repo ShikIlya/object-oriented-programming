@@ -484,11 +484,11 @@ def show_audit_report(audit_log: AuditLog, bank: Bank, risk_analyzer: RiskAnalyz
 
     report = AuditReportModel(audit_log, bank, risk_analyzer)
 
-    print('\nAudit Report')
+    print('\nAUDIT REPORT')
 
-    print('\nSuspicious transactions report:')
+    print('\nSUSPICIOUS TRANSACTIONS REPORT:')
     suspicious = report.get_suspicious_transactions_report()
-    print(f'Total suspicious: {len(suspicious)}')
+    print(f'Total suspicious transactions: {len(suspicious)}')
 
     for tx in suspicious:
         print(
@@ -498,10 +498,36 @@ def show_audit_report(audit_log: AuditLog, bank: Bank, risk_analyzer: RiskAnalyz
             f'{tx["risk_level"]}'
         )
 
-    print('\nError statistics:')
+    print('\nERROR STATISTICS REPORT:')
     error_stats = report.get_error_statistics()
     for level, count in error_stats.items():
         print(f'{level:8}: {count}')
+
+    print("\nCLIENT RISK PROFILES")
+
+    for client_id, client in bank.clients.items():
+        risk_profile = report.get_client_risk_profile(client_id)
+
+        print(
+            f"{risk_profile['name']} "
+            f"({client_id}) | "
+            f"suspicious: {client.is_suspicious}"
+        )
+
+        print(
+            f"  Transactions: "
+            f"{risk_profile['total_transactions']}"
+        )
+
+        print(
+            f"  Total amount: "
+            f"{risk_profile['total_amount']}"
+        )
+
+        print(
+            f"  Risk breakdown: "
+            f"{risk_profile['risk_breakdown']}"
+        )
 
 def main():
     bank = Bank()
