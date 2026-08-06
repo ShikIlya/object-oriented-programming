@@ -398,7 +398,11 @@ class ReportBuilder:
         client_risk_counts = {}
 
         for transaction in self.bank.transactions:
-            risk_level = self.risk_analyzer.analyze_risk(transaction)
+            risk_level = transaction.risk_level
+
+            if risk_level is None:
+                continue
+
             risk_level_stats[risk_level.name] += 1
             status_stats[transaction.status.name] += 1
 

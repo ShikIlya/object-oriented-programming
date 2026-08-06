@@ -517,6 +517,7 @@ class Transaction:
         self.available_at = available_at
         self.attempts = 0
         self.max_attempts = 3
+        self.risk_level = None
 
 class TransactionQueue:
     def __init__(self):
@@ -1046,17 +1047,20 @@ class RiskAnalyzer:
             if old_transaction.transaction_id == transaction.transaction_id:
                 continue
 
+            if old_transaction.created_at >= transaction.created_at:
+                continue
+
             if (
                 old_transaction.sender_account_id == transaction.sender_account_id
                 and old_transaction.receiver_account_id == transaction.receiver_account_id
-                and old_transaction.status == TransactionStatus.COMPLETED
+                and old_transaction.status is TransactionStatus.COMPLETED
             ):
                 return False
 
         return True
 
     def is_frequent_operation(self, transaction: Transaction) -> bool:
-        window_start = datetime.now() - timedelta(
+        window_start = transaction.created_at - timedelta(
             minutes=self.frequent_ops_window_minutes
         )
 
@@ -1069,16 +1073,14 @@ class RiskAnalyzer:
             if old_transaction.sender_account_id != transaction.sender_account_id:
                 continue
 
-            if old_transaction.status is not TransactionStatus.COMPLETED:
+            if old_transaction.created_at >= transaction.created_at:
                 continue
 
-            if old_transaction.completed_at is None:
+            if old_transaction.created_at < window_start:
                 continue
 
-            if old_transaction.completed_at < window_start:
-                continue
-
-            count += 1
+            if old_transaction.status is TransactionStatus.COMPLETED:
+                count += 1
 
         return count >= self.frequent_ops_count_threshold
 
@@ -1190,6 +1192,7 @@ class TransactionProcessor:
         transaction = queue.get_next_transaction()
 
         risk_level = self.risk_analyzer.analyze_risk(transaction)
+        transaction.risk_level = risk_level
 
         sender_account = self._get_sender_account(transaction)
         sender_client = next(
