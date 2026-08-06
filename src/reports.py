@@ -3,7 +3,7 @@ from models import (
     AuditLog,
     RiskAnalyzer,
     CurrencyType,
-    TransactionStatus
+    TransactionStatus, TransactionType
 )
 from datetime import datetime, timedelta
 import json
@@ -22,6 +22,97 @@ class ReportBuilder:
         self.bank = bank
         self.audit_log = audit_log
         self.risk_analyzer = risk_analyzer
+
+    def _transaction_effect_rub(
+        self,
+        transaction,
+        account_ids: set[str],
+    ) -> float:
+        sender_in_scope = transaction.sender_account_id in account_ids
+        receiver_in_scope = transaction.receiver_account_id in account_ids
+
+        effect = 0.0
+
+        if sender_in_scope:
+            sender_account = self.bank.accounts[transaction.sender_account_id]
+
+            debit = transaction.amount + transaction.commission
+
+            debit += getattr(sender_account, "commission", 0.0)
+
+            effect -= self.bank._convert_amount(
+                debit,
+                transaction.currency,
+                CurrencyType.RUB,
+            )
+
+        if receiver_in_scope:
+            receiver_account = self.bank.accounts[transaction.receiver_account_id]
+
+            credited_amount = transaction.amount
+
+            if transaction.transaction_type.name == TransactionType.EXCHANGE_TRANSACTION.name:
+                credited_amount = self.bank._convert_amount(
+                    transaction.amount,
+                    transaction.currency,
+                    receiver_account.currency,
+                )
+
+            effect += self.bank._convert_amount(
+                credited_amount,
+                receiver_account.currency,
+                CurrencyType.RUB,
+            )
+
+        return effect
+
+    def _build_balance_history(
+        self,
+        current_balance_rub: float,
+        transactions: list,
+        account_ids: set[str],
+    ) -> tuple[list[str], list[float]]:
+        transactions = sorted(
+            transactions,
+            key=lambda transaction: (
+                    transaction.completed_at or transaction.created_at
+            ),
+        )
+
+        if not transactions:
+            return (
+                [datetime.now().strftime("%d.%m.%Y %H:%M:%S")],
+                [current_balance_rub],
+            )
+
+        balance_before_first = current_balance_rub
+
+        for transaction in reversed(transactions):
+            effect = self._transaction_effect_rub(transaction, account_ids)
+            balance_before_first -= effect
+
+        labels = []
+        values = []
+
+        running_balance = balance_before_first
+
+        first_timestamp = (transactions[0].completed_at or transactions[0].created_at)
+
+        labels.append(
+            f"0 | {(first_timestamp).strftime('%d.%m.%Y %H:%M:%S')}"
+        )
+        values.append(running_balance)
+
+        for index, transaction in enumerate(transactions, start=1):
+            effect = self._transaction_effect_rub(transaction, account_ids)
+            running_balance += effect
+
+            timestamp = (transaction.completed_at or transaction.created_at)
+
+            labels.append(f"{index} | {timestamp.strftime('%d.%m.%Y %H:%M:%S')}")
+            values.append(running_balance)
+
+        return labels, values
 
     def build_bank_report(self) -> dict:
         stats = {
@@ -71,43 +162,32 @@ class ReportBuilder:
                 )
             return total
 
-        running_balance = current_total_balance_rub()
-        daily_bank_balance: dict[str, float] = {}
-
-        if not completed_transactions:
-            day_key = datetime.now().strftime("%Y-%m-%d")
-            daily_bank_balance[day_key] = running_balance
-        else:
-            first_ts = (
-                    completed_transactions[0].completed_at
-                    or completed_transactions[0].created_at
-            )
-            prev_day_key = (first_ts - timedelta(days=1)).strftime("%Y-%m-%d")
-            daily_bank_balance[prev_day_key] = running_balance
-
-            for transaction in completed_transactions:
-                if transaction.sender_account_id in self.bank.accounts:
-                    running_balance -= self.bank._convert_amount(
-                        transaction.amount,
-                        transaction.currency,
-                        CurrencyType.RUB,
-                    )
-
-                if transaction.receiver_account_id in self.bank.accounts:
-                    running_balance += self.bank._convert_amount(
-                        transaction.amount,
-                        transaction.currency,
-                        CurrencyType.RUB,
-                    )
-
-                ts = transaction.completed_at or transaction.created_at
-                day_key = ts.strftime("%Y-%m-%d")
-                daily_bank_balance[day_key] = running_balance
-
-        bank_balance_labels = sorted(daily_bank_balance.keys())
-        bank_balance_values = [
-            daily_bank_balance[day] for day in bank_balance_labels
+        completed_transactions = [
+            transaction
+            for transaction in self.bank.transactions
+            if transaction.status is TransactionStatus.COMPLETED
         ]
+
+        bank_account_ids = set(self.bank.accounts.keys())
+
+        current_bank_balance_rub = 0.0
+
+        for currency_value, amount in total_balance.items():
+            currency = CurrencyType(currency_value)
+
+            current_bank_balance_rub += self.bank._convert_amount(
+                amount,
+                currency,
+                CurrencyType.RUB,
+            )
+
+        bank_balance_labels, bank_balance_values = (
+            self._build_balance_history(
+                current_balance_rub=current_bank_balance_rub,
+                transactions=completed_transactions,
+                account_ids=bank_account_ids,
+            )
+        )
 
         return {
             "report_type": "bank",
@@ -236,63 +316,24 @@ class ReportBuilder:
                     })
 
         completed_transactions = [
-            t
-            for t in self.bank.transactions
-            if t.status is TransactionStatus.COMPLETED
-               and (
-                       t.sender_account_id in client_account_ids
-                       or t.receiver_account_id in client_account_ids
-               )
+            transaction
+            for transaction in self.bank.transactions
+            if (
+                transaction.status is TransactionStatus.COMPLETED
+                and (
+                    transaction.sender_account_id in client_account_ids
+                    or transaction.receiver_account_id in client_account_ids
+                )
+            )
         ]
 
-        completed_transactions.sort(
-            key=lambda t: t.completed_at or t.created_at
+        balance_history_labels, balance_history_values = (
+            self._build_balance_history(
+                current_balance_rub=total_balance_rub,
+                transactions=completed_transactions,
+                account_ids=client_account_ids,
+            )
         )
-
-        def client_total_balance_rub_at_current_accounts() -> float:
-            total = 0.0
-            for account in accounts:
-                total += self.bank._convert_amount(
-                    account["balance"],
-                    CurrencyType(account["currency"]),
-                    CurrencyType.RUB,
-                )
-            return total
-
-        running_balance = client_total_balance_rub_at_current_accounts()
-
-        daily_points: dict[str, float] = {}
-
-        if not completed_transactions:
-            day_key = datetime.now().strftime("%Y-%m-%d")
-            daily_points[day_key] = running_balance
-        else:
-            first_ts = completed_transactions[0].completed_at or completed_transactions[0].created_at
-            first_day = (first_ts - timedelta(days=1)).strftime("%Y-%m-%d")
-            daily_points[first_day] = running_balance
-
-            for transaction in completed_transactions:
-                if transaction.sender_account_id in client_account_ids:
-                    running_balance -= self.bank._convert_amount(
-                        transaction.amount,
-                        transaction.currency,
-                        CurrencyType.RUB,
-                    )
-
-                if transaction.receiver_account_id in client_account_ids:
-                    running_balance += self.bank._convert_amount(
-                        transaction.amount,
-                        transaction.currency,
-                        CurrencyType.RUB,
-                    )
-
-                ts = transaction.completed_at or transaction.created_at
-                day_key = ts.strftime("%Y-%m-%d")
-                daily_points[day_key] = running_balance
-
-        sorted_days = sorted(daily_points.keys())
-        balance_history_labels = sorted_days
-        balance_history_values = [daily_points[day] for day in sorted_days]
 
         return {
             "report_type": "client",
@@ -737,34 +778,54 @@ class ReportBuilder:
             if not all(isinstance(value, (int, float)) for value in values):
                 return
 
-            fig, ax = plt.subplots(figsize=(10, 5))
+            fig, ax = plt.subplots(figsize=(12, 6))
 
-            x_indices = list(range(len(values)))
-            ax.plot(x_indices, values, marker="o", linewidth=2)
+            x_positions = list(range(len(values)))
+
+            ax.plot(
+                x_positions,
+                values,
+                marker="o",
+                linewidth=2,
+                markersize=5,
+            )
 
             ax.set_title(title)
+            ax.set_xlabel("Transaction timeline")
             ax.set_ylabel(ylabel)
-            ax.set_xlabel("Time")
 
-            ax.yaxis.set_major_formatter(FuncFormatter(format_number))
+            ax.yaxis.set_major_formatter(
+                FuncFormatter(format_number)
+            )
 
             if len(labels) <= 8:
-                xticks = x_indices
+                tick_positions = x_positions
             else:
                 step = max(1, len(labels) // 8)
-                xticks = list(range(0, len(labels), step))
+                tick_positions = list(range(0, len(labels), step))
 
-            ax.set_xticks(xticks)
+            ax.set_xticks(tick_positions)
             ax.set_xticklabels(
-                [labels[i] for i in xticks],
-                rotation=30,
+                [labels[index] for index in tick_positions],
+                rotation=35,
                 ha="right",
+            )
+
+            ax.grid(
+                axis="y",
+                linestyle="--",
+                alpha=0.35,
             )
 
             fig.tight_layout()
 
             file_path = output_path / filename
-            fig.savefig(file_path, dpi=300, bbox_inches="tight")
+            fig.savefig(
+                file_path,
+                dpi=300,
+                bbox_inches="tight",
+            )
+
             plt.close(fig)
             saved_files.append(str(file_path))
 
