@@ -1060,8 +1060,21 @@ class RiskAnalyzer:
         return time(0, 0) <= transaction_time < time(5, 0)
 
     def is_new_receiver(self, transaction: Transaction) -> bool:
-        if transaction.receiver_account_id in self.bank.accounts:
-            return False
+        for old_transaction in self.bank.transactions:
+            if old_transaction.transaction_id == transaction.transaction_id:
+                continue
+
+            if old_transaction.created_at >= transaction.created_at:
+                continue
+
+            if old_transaction.sender_account_id != transaction.sender_account_id:
+                continue
+
+            if old_transaction.receiver_account_id != transaction.receiver_account_id:
+                continue
+
+            if old_transaction.status is TransactionStatus.COMPLETED:
+                return False
 
         return True
 
