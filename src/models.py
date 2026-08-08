@@ -4,6 +4,7 @@ import abc
 import uuid
 from datetime import datetime, time, timedelta
 import json
+from pathlib import Path
 
 class AccountStatus(Enum):
     ACTIVE = "active"
@@ -967,6 +968,9 @@ class AuditLog:
 
         self.entries.append(entry)
 
+        if self.file_name is not None:
+            self.save_to_file()
+
         return entry
 
     def filter_by_level(self, level: AuditLevel) -> list[AuditEntry]:
@@ -988,12 +992,20 @@ class AuditLog:
         if self.file_name is None:
             raise InvalidOperationError('File name is not set')
 
+        output_path = Path(self.file_name)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
         payload = {
             "entries": [entry.to_dict() for entry in self.entries]
         }
 
-        with open(self.file_name, 'w', encoding='utf-8') as file:
-            json.dump(payload, file, ensure_ascii=False, indent=4)
+        with output_path.open("w", encoding="utf-8") as file:
+            json.dump(
+                payload,
+                file,
+                ensure_ascii=False,
+                indent=4,
+            )
 
 class RiskLevel(Enum):
     LOW = 1
@@ -1254,6 +1266,32 @@ class TransactionProcessor:
                     'receiver_account_id': transaction.receiver_account_id,
                 }
             )
+        except (
+            InvalidOperationError,
+            InsufficientFundsError,
+            AccountFrozenError,
+            AccountClosedError,
+        ) as ex:
+            transaction.status = TransactionStatus.FAILED
+            transaction.completed_at = datetime.now()
+            transaction.failure_reason = str(ex)
+            transaction.available_at = None
+
+            self.audit_log.log(
+                level=AuditLevel.ERROR,
+                event_type="transaction_failed",
+                message=str(ex),
+                account_id=transaction.sender_account_id,
+                transaction_id=transaction.transaction_id,
+                metadata={
+                    "risk_level": risk_level.name,
+                    "error_type": type(ex).__name__,
+                    "attempts": transaction.attempts,
+                    "sender_account_id": transaction.sender_account_id,
+                    "receiver_account_id": transaction.receiver_account_id,
+                },
+            )
+
         except Exception as ex:
             transaction.failure_reason = str(ex)
 
