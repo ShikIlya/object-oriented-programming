@@ -304,16 +304,17 @@ class ReportBuilder:
             transactions.append(transaction_data)
             status_stats[transaction.status.name] += 1
 
-            if self.risk_analyzer is not None:
-                risk_level = self.risk_analyzer.analyze_risk(transaction)
-                if (
-                        risk_level.name in ("MEDIUM", "HIGH")
-                        and transaction.status is not TransactionStatus.CANCELED
-                ):
-                    suspicious_transactions.append({
-                        **transaction_data,
-                        "risk_level": risk_level.name,
-                    })
+            risk_level = transaction.risk_level
+
+            if (
+                risk_level is not None
+                and risk_level.name in ("MEDIUM", "HIGH")
+                and transaction.status is not TransactionStatus.CANCELED
+            ):
+                suspicious_transactions.append({
+                    **transaction_data,
+                    "risk_level": risk_level.name,
+                })
 
         completed_transactions = [
             transaction

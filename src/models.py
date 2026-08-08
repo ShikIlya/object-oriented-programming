@@ -1121,7 +1121,7 @@ class AuditReport:
             if transaction.status == TransactionStatus.CANCELED:
                 continue
 
-            risk_level = self.risk_analyzer.analyze_risk(transaction)
+            risk_level = transaction.risk_level
 
             if risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH):
                 suspicious_transactions.append({
@@ -1154,7 +1154,11 @@ class AuditReport:
                     transaction.receiver_account_id in client.accounts:
                 client_transactions.append(transaction)
 
-                risk_level = self.risk_analyzer.analyze_risk(transaction)
+                risk_level = transaction.risk_level
+
+                if risk_level is None:
+                    continue
+
                 risk_counts[risk_level] += 1
 
         total_amount = sum(t.amount for t in client_transactions)
