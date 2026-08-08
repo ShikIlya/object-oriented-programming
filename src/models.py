@@ -1036,7 +1036,12 @@ class RiskAnalyzer:
             return RiskLevel.HIGH
 
     def is_large_amount(self, transaction: Transaction) -> bool:
-        return transaction.amount >= self.large_amount_threshold
+        amount_in_rub = self.bank._convert_amount(
+            transaction.amount,
+            transaction.currency,
+            CurrencyType.RUB
+        )
+        return amount_in_rub >= self.large_amount_threshold
 
     def is_night_operation(self, transaction: Transaction) -> bool:
         transaction_time = transaction.created_at.time()
