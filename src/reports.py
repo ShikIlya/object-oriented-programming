@@ -654,33 +654,116 @@ class ReportBuilder:
         with output_path.open("w", encoding="utf-8") as file:
             json.dump(report_data, file, ensure_ascii=False, indent=4)
 
-    def export_to_csv(self, report_data: dict, file_path: str) -> None:
-        report_type = report_data.get("report_type")
+    def export_to_csv(
+            self,
+            report_data: dict,
+            file_path: str,
+    ) -> None:
+        report_type = report_data.get("report_type", "")
+        generated_at = report_data.get("generated_at", "")
+        summary = report_data.get("summary", {})
         details = report_data.get("details", {})
+        charts_data = report_data.get("charts_data", {})
 
-        if report_type == "bank":
-            rows = details.get("top_clients", [])
+        rows = []
 
-        elif report_type == "client":
-            rows = details.get("transactions", [])
+        # Summary
+        if isinstance(summary, dict):
+            rows.append({
+                "section": "summary",
+                "report_type": report_type,
+                "generated_at": generated_at,
+                **summary,
+            })
 
-        elif report_type == "risk":
-            rows = details.get("suspicious_transactions", [])
+        # Details
+        for section_name, section_data in details.items():
+            if isinstance(section_data, list):
+                for index, item in enumerate(section_data, start=1):
+                    if isinstance(item, dict):
+                        rows.append({
+                            "section": section_name,
+                            "item_no": index,
+                            "report_type": report_type,
+                            "generated_at": generated_at,
+                            **item,
+                        })
+                    else:
+                        rows.append({
+                            "section": section_name,
+                            "item_no": index,
+                            "report_type": report_type,
+                            "generated_at": generated_at,
+                            "value": item,
+                        })
 
-        else:
-            raise ValueError(f"Unsupported report type: {report_type}")
+            elif isinstance(section_data, dict):
+                rows.append({
+                    "section": section_name,
+                    "report_type": report_type,
+                    "generated_at": generated_at,
+                    **section_data,
+                })
+
+            else:
+                rows.append({
+                    "section": section_name,
+                    "report_type": report_type,
+                    "generated_at": generated_at,
+                    "value": section_data,
+                })
+
+        # Charts
+        for chart_name, chart_data in charts_data.items():
+            if not isinstance(chart_data, dict):
+                rows.append({
+                    "section": f"chart_{chart_name}",
+                    "report_type": report_type,
+                    "generated_at": generated_at,
+                    "value": chart_data,
+                })
+                continue
+
+            labels = chart_data.get("labels", [])
+            values = chart_data.get("values", [])
+
+            if not labels and not values:
+                rows.append({
+                    "section": f"chart_{chart_name}",
+                    "report_type": report_type,
+                    "generated_at": generated_at,
+                    "title": chart_data.get("title", ""),
+                    "ylabel": chart_data.get("ylabel", ""),
+                })
+                continue
+
+            for index, (label, value) in enumerate(zip(labels, values), start=1):
+                rows.append({
+                    "section": f"chart_{chart_name}",
+                    "item_no": index,
+                    "report_type": report_type,
+                    "generated_at": generated_at,
+                    "title": chart_data.get("title", ""),
+                    "ylabel": chart_data.get("ylabel", ""),
+                    "label": label,
+                    "value": value,
+                })
 
         output_path = Path(file_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with output_path.open("w", encoding="utf-8", newline="") as file:
+        with output_path.open("w", encoding="utf-8-sig", newline="") as file:
             if not rows:
                 file.write("")
                 return
 
             fieldnames = list(rows[0].keys())
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            for row in rows[1:]:
+                for key in row.keys():
+                    if key not in fieldnames:
+                        fieldnames.append(key)
 
+            writer = csv.DictWriter(file, fieldnames=fieldnames, restval="")
             writer.writeheader()
             writer.writerows(rows)
 
