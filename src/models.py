@@ -73,6 +73,10 @@ class BankAccount(AbstractAccount):
         currency: CurrencyType = CurrencyType.RUB
     ):
         super().__init__(account_id, name, status, balance)
+
+        if not isinstance(currency, CurrencyType):
+            raise InvalidOperationError("Currency must be one of: RUB, USD, EUR, KZT, CNY")
+
         self.currency = currency
 
     def deposit(self, amount: float):
@@ -168,10 +172,6 @@ class SavingsAccount(BankAccount):
         self._balance = self._balance * (1 + self.interest_rate / 100)
 
 class PremiumAccount(BankAccount):
-    commission: float = 0
-    overdraft: float = 0
-    limit: float = 0
-
     def __init__(
         self,
         account_id: str | None = None,
@@ -181,7 +181,7 @@ class PremiumAccount(BankAccount):
         currency: CurrencyType = CurrencyType.RUB,
         commission: float = 0,
         overdraft: float = 0,
-        limit: float = 0
+        limit: float = 1_000_000
     ):
         super().__init__(account_id, name, status, balance, currency)
 
@@ -650,7 +650,7 @@ class Bank:
         interest_rate: float = 0,
         commission: float = 0,
         overdraft: float = 0,
-        limit: float = 0,
+        limit: float = 1_000_000,
         stocks: list[Stock] | None = None,
         bonds: list[Bond] | None = None,
         etf: list[Etf] | None = None
@@ -1207,15 +1207,39 @@ class TransactionProcessor:
         self.audit_log = audit_log
 
     def process_next_transaction(self, queue: TransactionQueue):
-        self.bank.check_time()
-
         if not queue.has_available_transactions():
             raise InvalidOperationError('There are no available pending transactions')
 
         transaction = queue.get_next_transaction()
-
         risk_level = self.risk_analyzer.analyze_risk(transaction)
         transaction.risk_level = risk_level
+
+        try:
+            self.bank.check_time()
+        except InvalidOperationError as ex:
+            transaction.status = TransactionStatus.FAILED
+            transaction.completed_at = datetime.now()
+            transaction.failure_reason = str(ex)
+            transaction.available_at = None
+
+            self.audit_log.log(
+                level=AuditLevel.ERROR,
+                event_type="transaction_failed",
+                message=str(ex),
+                account_id=transaction.sender_account_id,
+                transaction_id=transaction.transaction_id,
+                metadata={
+                    "risk_level": risk_level.name,
+                    "error_type": type(ex).__name__,
+                    "retryable": False,
+                    "reason": "night_operation_restriction",
+                    "attempts": transaction.attempts,
+                    "sender_account_id": transaction.sender_account_id,
+                    "receiver_account_id": transaction.receiver_account_id,
+                },
+            )
+
+            return
 
         sender_account = self._get_sender_account(transaction)
         sender_client = next(

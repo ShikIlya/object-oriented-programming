@@ -307,14 +307,11 @@ def process_all_transactions(
     queue: TransactionQueue,
     processor: TransactionProcessor,
 ):
-    processed_count = 0
-
     while True:
         if queue.has_available_transactions():
             transaction = queue.get_next_transaction()
 
             processor.process_next_transaction(queue)
-            processed_count += 1
 
             if transaction.failure_reason is not None:
                 print(f"Reason: {transaction.failure_reason}")
