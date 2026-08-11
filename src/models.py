@@ -31,8 +31,6 @@ class InsufficientFundsError(Exception):
     pass
 
 class AbstractAccount(abc.ABC):
-    _balance: float = 0
-
     def __init__(
         self,
         account_id: str | None = None,
@@ -40,12 +38,13 @@ class AbstractAccount(abc.ABC):
         status: AccountStatus = AccountStatus.ACTIVE,
         balance: float = 0
     ):
-        self.account_id = account_id
         self.name = name
         self.status = status
 
         if account_id is None:
-            self.account_id = str(uuid.uuid4())
+            self.account_id = str(uuid.uuid4())[:8]
+        else:
+            self.account_id = account_id
 
         if balance < 0:
             raise InvalidOperationError('Initial balance cannot be negative')
@@ -60,6 +59,9 @@ class AbstractAccount(abc.ABC):
 
     @abc.abstractmethod
     def get_account_info(self): pass
+
+    def get_total_value(self) -> float:
+        return self._balance
 
 class BankAccount(AbstractAccount):
     currency: CurrencyType = CurrencyType.RUB
@@ -421,10 +423,7 @@ class InvestmentAccount(BankAccount):
         if annual_rate < 0:
             raise InvalidOperationError('Annual rate cannot be negative')
 
-        total_value = self._balance
-        total_value += sum(stock.price * stock.quantity for stock in self._stocks)
-        total_value += sum(bond.price * bond.quantity for bond in self._bonds)
-        total_value += sum(etf.price * etf.quantity for etf in self._etf)
+        total_value = self.get_total_value()
 
         projected_value = total_value * (1 + annual_rate / 100)
 
@@ -434,6 +433,15 @@ class InvestmentAccount(BankAccount):
             "projected_value": projected_value,
             "projected_growth": projected_value - total_value,
         }
+
+    def get_total_value(self) -> float:
+        assets_value = (
+                sum(stock.price * stock.quantity for stock in self._stocks)
+                + sum(bond.price * bond.quantity for bond in self._bonds)
+                + sum(etf.price * etf.quantity for etf in self._etf)
+        )
+
+        return self._balance + assets_value
 
 class ClientStatus(Enum):
     ACTIVE = 'active'
@@ -653,7 +661,8 @@ class Bank:
         limit: float = 1_000_000,
         stocks: list[Stock] | None = None,
         bonds: list[Bond] | None = None,
-        etf: list[Etf] | None = None
+        etf: list[Etf] | None = None,
+        account_id: str | None = None,
     ):
         if client_id not in self.clients:
             raise InvalidOperationError('Client does not exist')
@@ -668,15 +677,46 @@ class Bank:
         account = None
 
         if account_type is AccountType.BANK:
-            account = BankAccount(name=name, balance=balance, currency=currency)
+            account = BankAccount(
+                account_id=account_id,
+                name=name,
+                balance=balance,
+                currency=currency
+            )
         elif account_type is AccountType.SAVINGS:
-            account = SavingsAccount(name=name, balance=balance, currency=currency, min_balance=min_balance, interest_rate=interest_rate)
+            account = SavingsAccount(
+                account_id=account_id,
+                name=name,
+                balance=balance,
+                currency=currency,
+                min_balance=min_balance,
+                interest_rate=interest_rate
+            )
         elif account_type is AccountType.PREMIUM:
-            account = PremiumAccount(name=name, balance=balance, currency=currency, commission=commission, overdraft=overdraft, limit=limit)
+            account = PremiumAccount(
+                account_id=account_id,
+                name=name,
+                balance=balance,
+                currency=currency,
+                commission=commission,
+                overdraft=overdraft,
+                limit=limit
+            )
         elif account_type is AccountType.INVESTMENT:
-            account = InvestmentAccount(name=name, balance=balance, currency=currency, stocks=stocks, bonds=bonds, etf=etf)
+            account = InvestmentAccount(
+                account_id=account_id,
+                name=name,
+                balance=balance,
+                currency=currency,
+                stocks=stocks,
+                bonds=bonds,
+                etf=etf
+            )
         else:
             raise InvalidOperationError('Invalid account type')
+
+        if account.account_id in self.accounts:
+            raise InvalidOperationError("Account with this ID already exists")
 
         self.accounts[account.account_id] = account
         client.accounts.append(account.account_id)
@@ -815,7 +855,7 @@ class Bank:
             if account.status is AccountStatus.CLOSED:
                 continue
 
-            totals[account.currency.value] += account._balance
+            totals[account.currency.value] += account.get_total_value()
 
         return totals
 
@@ -847,7 +887,7 @@ class Bank:
                     continue
 
                 total_balance += self._convert_amount(
-                    account._balance,
+                    account.get_total_value(),
                     account.currency,
                     base_currency
                 )
