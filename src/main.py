@@ -11,7 +11,9 @@ from models import (
     Stock,
     Bond,
     Etf,
-    TransactionStatus
+    TransactionStatus,
+    AccountFrozenError,
+    InvalidOperationError
 )
 from reports import (
     ReportBuilder
@@ -173,6 +175,89 @@ DEMO_ACCOUNTS = [
         ],
     },
 ]
+
+def demonstrate_security_scenarios(
+    bank: Bank,
+    account_ids: dict[str, str],
+) -> None:
+    client_id = "client_5"
+    account_id = account_ids["acc_9"]
+
+    account = bank.accounts[account_id]
+
+    print(f"\nFreezing account: {account_id}")
+
+    bank.freeze_account(account_id)
+
+    print(
+        f"Account status after freeze: "
+        f"{account.status.value}"
+    )
+
+    try:
+        account.withdraw(1)
+    except AccountFrozenError as ex:
+        print(
+            "Operation on frozen account rejected: "
+            f"{ex}"
+        )
+
+    bank.unfreeze_account(account_id)
+
+    print(
+        f"Account status after unfreeze: "
+        f"{account.status.value}"
+    )
+
+    original_balance = account._balance
+
+    try:
+        account.withdraw(1)
+
+        print(
+            "Operation after unfreeze succeeded: "
+            f"balance {original_balance} -> {account._balance}"
+        )
+    except Exception as ex:
+        print(
+            "Unexpected error after unfreeze: "
+            f"{ex}"
+        )
+
+    print(
+        f"\nTesting authentication failures for: "
+        f"{client_id}"
+    )
+
+    for attempt in range(1, 4):
+        try:
+            bank.authenticate_client(
+                client_id,
+                "wrong-password",
+            )
+        except InvalidOperationError as ex:
+            client = bank.clients[client_id]
+
+            print(
+                f"Login attempt {attempt} rejected: "
+                f"{ex}"
+            )
+            print(
+                f"Client status: {client.status.value}"
+            )
+
+    try:
+        bank.authenticate_client(client_id, "correct-password")
+    except InvalidOperationError as ex:
+        print(
+            "Login after three failures rejected: "
+            f"{ex}"
+        )
+
+    print(
+        f"Final client status: "
+        f"{bank.clients[client_id].status.value}"
+    )
 
 def create_demo_clients(bank: Bank):
     for client_data in DEMO_CLIENTS:
@@ -611,6 +696,11 @@ def main():
 
     audit_log.save_to_file()
     print('\nAudit log saved to audit_log.json')
+
+    demonstrate_security_scenarios(
+        bank,
+        account_ids
+    )
 
     print('\nChecklist:')
     print('Initialization: done')

@@ -1235,6 +1235,7 @@ class AuditReport:
         }
 
 class TransactionProcessor:
+    EXTERNAL_TRANSFER_COMMISSION_RATE = 0.02
 
     def __init__(
         self,
@@ -1245,6 +1246,23 @@ class TransactionProcessor:
         self.bank = bank
         self.risk_analyzer = risk_analyzer
         self.audit_log = audit_log
+
+    def _calculate_commission(
+        self,
+        transaction: Transaction,
+    ) -> float:
+        if transaction.commission < 0:
+            raise InvalidOperationError(
+                "Commission cannot be negative"
+            )
+
+        if transaction.transaction_type is TransactionType.EXTERNAL_TRANSACTION:
+            transaction.commission = (
+                    transaction.amount
+                    * self.EXTERNAL_TRANSFER_COMMISSION_RATE
+            )
+
+        return transaction.commission
 
     def process_next_transaction(self, queue: TransactionQueue):
         if not queue.has_available_transactions():
@@ -1418,6 +1436,9 @@ class TransactionProcessor:
         self._validate_transaction(transaction)
 
         sender_account = self._get_sender_account(transaction)
+
+        self._calculate_commission(transaction)
+
         receiver_account = None
 
         if transaction.transaction_type != TransactionType.EXTERNAL_TRANSACTION:
