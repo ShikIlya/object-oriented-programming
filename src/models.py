@@ -1101,7 +1101,7 @@ class RiskAnalyzer:
         if self.is_large_amount(transaction):
             risk_score += 1
 
-        if self.is_night_operation(transaction):
+        if self.is_night_operation():
             risk_score += 1
 
         if self.is_new_receiver(transaction):
@@ -1125,9 +1125,9 @@ class RiskAnalyzer:
         )
         return amount_in_rub >= self.large_amount_threshold
 
-    def is_night_operation(self, transaction: Transaction) -> bool:
-        transaction_time = transaction.created_at.time()
-        return time(0, 0) <= transaction_time < time(5, 0)
+    def is_night_operation(self) -> bool:
+        operation_time = datetime.now().time()
+        return time(0, 0) <= operation_time < time(5, 0)
 
     def is_new_receiver(self, transaction: Transaction) -> bool:
         for old_transaction in self.bank.transactions:
