@@ -507,6 +507,27 @@ class Transaction:
         priority: TransactionPriority,
         available_at: datetime | None
     ):
+        if not isinstance(currency, CurrencyType):
+            raise InvalidOperationError("Currency must be an instance of CurrencyType")
+
+        if not isinstance(transaction_type, TransactionType):
+            raise InvalidOperationError("Transaction type must be an instance of TransactionType")
+
+        if not isinstance(priority, TransactionPriority):
+            raise InvalidOperationError("Priority must be an instance of TransactionPriority")
+
+        if not isinstance(amount, (int, float)):
+            raise InvalidOperationError("Amount must be a number")
+
+        if not isinstance(commission, (int, float)):
+            raise InvalidOperationError("Commission must be a number")
+
+        if not isinstance(sender_account_id, str) or not sender_account_id:
+            raise InvalidOperationError("Sender account ID must be a non-empty string")
+
+        if not isinstance(receiver_account_id, str) or not receiver_account_id:
+            raise InvalidOperationError("Receiver account ID must be a non-empty string")
+
         if transaction_id is None:
             self.transaction_id = str(uuid.uuid4())
         else:
@@ -920,6 +941,15 @@ class Bank:
     ):
         self.check_time()
 
+        if not isinstance(currency, CurrencyType):
+            raise InvalidOperationError("Currency must be an instance of CurrencyType")
+
+        if not isinstance(transaction_type, TransactionType):
+            raise InvalidOperationError("Transaction type must be an instance of TransactionType")
+
+        if not isinstance(priority, TransactionPriority):
+            raise InvalidOperationError("Priority must be an instance of TransactionPriority")
+
         if sender_account_id not in self.accounts:
             raise InvalidOperationError('Sender account does not exist')
 
@@ -1264,107 +1294,93 @@ class TransactionProcessor:
 
         return transaction.commission
 
-    def process_next_transaction(self, queue: TransactionQueue):
+    def process_next_transaction(
+            self,
+            queue: TransactionQueue,
+    ) -> None:
         if not queue.has_available_transactions():
-            raise InvalidOperationError('There are no available pending transactions')
+            raise InvalidOperationError(
+                "There are no available pending transactions"
+            )
 
         transaction = queue.get_next_transaction()
-        risk_level = self.risk_analyzer.analyze_risk(transaction)
-        transaction.risk_level = risk_level
-
-        try:
-            self.bank.check_time()
-        except InvalidOperationError as ex:
-            transaction.status = TransactionStatus.FAILED
-            transaction.completed_at = datetime.now()
-            transaction.failure_reason = str(ex)
-            transaction.available_at = None
-
-            self.audit_log.log(
-                level=AuditLevel.ERROR,
-                event_type="transaction_failed",
-                message=str(ex),
-                account_id=transaction.sender_account_id,
-                transaction_id=transaction.transaction_id,
-                metadata={
-                    "risk_level": risk_level.name,
-                    "error_type": type(ex).__name__,
-                    "retryable": False,
-                    "reason": "night_operation_restriction",
-                    "attempts": transaction.attempts,
-                    "sender_account_id": transaction.sender_account_id,
-                    "receiver_account_id": transaction.receiver_account_id,
-                },
-            )
-
-            return
-
-        sender_account = self._get_sender_account(transaction)
-        sender_client = next(
-            (
-                client
-                for client in self.bank.clients.values()
-                if sender_account.account_id in client.accounts
-            ),
-            None,
-        )
-
-        if sender_client is not None and risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH):
-            sender_client.is_suspicious = True
-
-        if risk_level == RiskLevel.HIGH:
-            transaction.status = TransactionStatus.BLOCKED
-            transaction.failure_reason = 'Transaction is blocked due to high risk'
-            transaction.completed_at = datetime.now()
-            self.audit_log.log(
-                level=AuditLevel.CRITICAL,
-                event_type='transaction_blocked',
-                message='Transaction blocked due to high risk',
-                account_id=transaction.sender_account_id,
-                transaction_id=transaction.transaction_id,
-                metadata={
-                    'risk_level': risk_level.name,
-                    'sender_account_id': transaction.sender_account_id,
-                    'receiver_account_id': transaction.receiver_account_id,
-                }
-            )
-            return
-
-        if risk_level == RiskLevel.MEDIUM:
-            self.audit_log.log(
-                level=AuditLevel.WARNING,
-                event_type='transaction_warning',
-                message='Transaction marked as suspicious with medium risk',
-                account_id=transaction.sender_account_id,
-                transaction_id=transaction.transaction_id,
-                metadata={
-                    'risk_level': risk_level.name,
-                    'sender_account_id': transaction.sender_account_id,
-                    'receiver_account_id': transaction.receiver_account_id,
-                }
-            )
-
         transaction.status = TransactionStatus.PROCESSING
         transaction.attempts += 1
 
         try:
+            risk_level = self.risk_analyzer.analyze_risk(transaction)
+            transaction.risk_level = risk_level
+
+            self.bank.check_time()
+
+            sender_account = self._get_sender_account(transaction)
+            sender_client = next(
+                (
+                    client
+                    for client in self.bank.clients.values()
+                    if sender_account.account_id in client.accounts
+                ),
+                None,
+            )
+
+            if (
+                sender_client is not None
+                and risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH)
+            ):
+                sender_client.is_suspicious = True
+
+            if risk_level is RiskLevel.HIGH:
+                transaction.status = TransactionStatus.BLOCKED
+                transaction.failure_reason = (
+                    "Transaction is blocked due to high risk"
+                )
+                transaction.completed_at = datetime.now()
+                transaction.available_at = None
+
+                self.audit_log.log(
+                    level=AuditLevel.CRITICAL,
+                    event_type="transaction_blocked",
+                    message=transaction.failure_reason,
+                    account_id=transaction.sender_account_id,
+                    transaction_id=transaction.transaction_id,
+                    metadata={
+                        "risk_level": risk_level.name,
+                        "sender_account_id": transaction.sender_account_id,
+                        "receiver_account_id": transaction.receiver_account_id,
+                    },
+                )
+                return
+
+            if risk_level is RiskLevel.MEDIUM:
+                self.audit_log.log(
+                    level=AuditLevel.WARNING,
+                    event_type="transaction_warning",
+                    message="Transaction marked as suspicious with medium risk",
+                    account_id=transaction.sender_account_id,
+                    transaction_id=transaction.transaction_id,
+                    metadata={
+                        "risk_level": risk_level.name,
+                    },
+                )
+
             self._process_transaction(transaction)
+
             transaction.status = TransactionStatus.COMPLETED
             transaction.completed_at = datetime.now()
             transaction.failure_reason = None
+            transaction.available_at = None
 
             self.audit_log.log(
                 level=AuditLevel.INFO,
-                event_type='transaction_completed',
-                message='Transaction completed successfully',
+                event_type="transaction_completed",
+                message="Transaction completed successfully",
                 account_id=transaction.sender_account_id,
                 transaction_id=transaction.transaction_id,
                 metadata={
-                    'risk_level': risk_level.name,
-                    'sender_account_id': transaction.sender_account_id,
-                    'receiver_account_id': transaction.receiver_account_id,
-                }
+                    "risk_level": risk_level.name,
+                },
             )
+
         except (
             InvalidOperationError,
             InsufficientFundsError,
@@ -1383,11 +1399,9 @@ class TransactionProcessor:
                 account_id=transaction.sender_account_id,
                 transaction_id=transaction.transaction_id,
                 metadata={
-                    "risk_level": risk_level.name,
                     "error_type": type(ex).__name__,
                     "attempts": transaction.attempts,
-                    "sender_account_id": transaction.sender_account_id,
-                    "receiver_account_id": transaction.receiver_account_id,
+                    "retryable": False,
                 },
             )
 
@@ -1396,40 +1410,41 @@ class TransactionProcessor:
 
             if transaction.attempts < transaction.max_attempts:
                 transaction.status = TransactionStatus.PENDING
-                transaction.available_at = datetime.now() + timedelta(minutes=5)
+                transaction.available_at = (
+                        datetime.now()
+                        + timedelta(minutes=5)
+                )
 
                 self.audit_log.log(
                     level=AuditLevel.WARNING,
-                    event_type='transaction_retry_scheduled',
+                    event_type="transaction_retry_scheduled",
                     message=str(ex),
                     account_id=transaction.sender_account_id,
                     transaction_id=transaction.transaction_id,
                     metadata={
-                        'risk_level': risk_level.name,
-                        'attempts': transaction.attempts,
-                        'max_attempts': transaction.max_attempts,
-                        'next_retry_at': transaction.available_at.isoformat(),
-                        'sender_account_id': transaction.sender_account_id,
-                        'receiver_account_id': transaction.receiver_account_id,
-                    }
+                        "error_type": type(ex).__name__,
+                        "attempts": transaction.attempts,
+                        "max_attempts": transaction.max_attempts,
+                        "next_retry_at": transaction.available_at.isoformat(),
+                    },
                 )
             else:
                 transaction.status = TransactionStatus.FAILED
                 transaction.completed_at = datetime.now()
+                transaction.available_at = None
 
                 self.audit_log.log(
                     level=AuditLevel.ERROR,
-                    event_type='transaction_failed',
+                    event_type="transaction_failed",
                     message=str(ex),
                     account_id=transaction.sender_account_id,
                     transaction_id=transaction.transaction_id,
                     metadata={
-                        'risk_level': risk_level.name,
-                        'attempts': transaction.attempts,
-                        'max_attempts': transaction.max_attempts,
-                        'sender_account_id': transaction.sender_account_id,
-                        'receiver_account_id': transaction.receiver_account_id,
-                    }
+                        "error_type": type(ex).__name__,
+                        "attempts": transaction.attempts,
+                        "max_attempts": transaction.max_attempts,
+                        "retryable": False,
+                    },
                 )
 
     def _process_transaction(self, transaction: Transaction):
